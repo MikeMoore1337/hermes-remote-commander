@@ -23,6 +23,9 @@ Shell commands can still signal processes allowed by the OS, so use a dedicated
 identity and isolated process namespace.
 When upstream telemetry is disabled, the agent's `capture` path returns before
 creating a telemetry identifier or reading telemetry configuration.
+PDF creation uses an installed system Chrome, Chromium or Windows Edge. It does
+not download a browser, prune cached builds or execute a browser from the
+agent-writable cache; missing system browsers produce an explicit error.
 
 The existing Hermes schema-1 workspace registry, native Windows bridge, observer
 and Control Center remain in [the Hermes repository](https://github.com/MikeMoore1337/hermes).
