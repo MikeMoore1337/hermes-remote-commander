@@ -49,7 +49,7 @@ export class DeviceHub {
   }
 
   /** Attach an authenticated socket; the agent must send `hello` as its first frame. */
-  attach(socket: WebSocket, ownerId: string, expectedDeviceId?: string): void {
+  attach(socket: WebSocket, ownerId: string, expectedDeviceId?: string, isCurrentGrant?: () => boolean): void {
     let deviceId: string | null = null;
 
     socket.on('message', (raw) => {
@@ -63,6 +63,19 @@ export class DeviceHub {
         if (msg.protocol !== BRC_PROTOCOL_VERSION) {
           this.sendTo(socket, { type: 'error', code: 'PROTOCOL_MISMATCH', message: `relay speaks v${BRC_PROTOCOL_VERSION}`, fatal: true });
           return socket.close(1002, 'protocol mismatch');
+        }
+        // A socket authenticated before rotation can delay its hello until afterward.
+        try {
+          // shortcut: callers without a grant callback must handle revocation themselves; supply one when grants can change.
+          if (isCurrentGrant && !isCurrentGrant()) return socket.close(4401, 'device credential revoked');
+        } catch {
+          return socket.close(1011, 'device authorization unavailable');
+        }
+        if (!msg.device || typeof msg.device !== 'object' ||
+            [msg.device.deviceId, msg.device.name, msg.device.platform, msg.device.arch,
+              msg.device.hostname, msg.device.agentVersion, msg.device.coreVersion].some((value) => typeof value !== 'string') ||
+            !Array.isArray(msg.tools) || msg.tools.some((tool) => !tool || typeof tool !== 'object' || typeof tool.name !== 'string')) {
+          return socket.close(1002, 'invalid hello');
         }
         if (expectedDeviceId && msg.device.deviceId !== expectedDeviceId) {
           this.sendTo(socket, { type: 'error', code: 'DEVICE_ID_MISMATCH', message: 'hello.deviceId does not match the paired device token', fatal: true });

@@ -24,6 +24,8 @@ const relay = buildRelay({
   relayVersion: 'test-pinned',
 }, () => {});
 let goodSocket = null;
+let staleSocket = null;
+let rotatedSocket = null;
 
 async function connectOnce(uri, opts = {}) {
   return await new Promise((resolve, reject) => {
@@ -84,18 +86,24 @@ try {
   console.log('WSS_INVALID_BEARER=DENIED');
 
   const good = await connectOnce(base, { headers: { Authorization: 'Bearer ' + validToken } });
-  if (!good.accepted) throw Error('VALID_BEARER_REJECTED');
+  if (!good.accepted) throw Error(`VALID_BEARER_REJECTED: ${good.status ?? good.errorCode}`);
   goodSocket = good.socket;
   console.log('WSS_VALID_BEARER=ACCEPTED');
 
-  // Only the authenticated WSS connection receives an immutable credential hash.
-  // A direct SQLite re-key simulates the interval before the old socket closes.
-  goodSocket.send(JSON.stringify({
+  // Authenticate before rotation but deliberately delay the hello frame.
+  const stale = await connectOnce(base, { headers: { Authorization: 'Bearer ' + validToken } });
+  if (!stale.accepted) throw Error('SECOND_VALID_BEARER_REJECTED');
+  staleSocket = stale.socket;
+  const hello = {
     type: 'hello', protocol: 1,
     device: {deviceId:'sandbox-agent',name:'sandbox-agent',platform:'linux',
       hostname:'ci',arch:'x64',agentVersion:'ci',coreVersion:'ci'},
     tools: [{name:'read_file',description:'synthetic',inputSchema:{type:'object'}}],
-  }));
+  };
+
+  // Only the authenticated WSS connection receives an immutable credential hash.
+  // A direct SQLite re-key simulates the interval before the old socket closes.
+  goodSocket.send(JSON.stringify(hello));
   let connected;
   for (let attempt = 0; attempt < 50; attempt++) {
     connected = relay.hub.get('sandbox-agent');
@@ -132,10 +140,48 @@ try {
 
   const ctx = {userId:user.id,clientId:'synthetic-only'};
   const args = {deviceId:'sandbox-agent',path:'/workspace/synthetic.txt'};
-  relay.store.issueDeviceToken('sandbox-agent',user.id,'sandbox-agent','linux');
+  const newToken = relay.store.issueDeviceToken('sandbox-agent',user.id,'sandbox-agent','linux');
   const rotated = await invokeTool(relay.hub,relay.store,ctx,'read_file',args);
   if (rotated.ok || rotated.status !== 403) throw Error('OLD_SOCKET_AUTH_AFTER_REKEY');
   console.log('WSS_ROTATED_OLD_SOCKET_MCP=DENIED');
+
+  const current = await connectOnce(base, { headers: { Authorization: 'Bearer ' + newToken } });
+  if (!current.accepted) throw Error('ROTATED_BEARER_REJECTED');
+  rotatedSocket = current.socket;
+  rotatedSocket.send(JSON.stringify(hello));
+  let currentConnection;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    currentConnection = relay.hub.get('sandbox-agent');
+    if (currentConnection?.socket.hermesAuthTokenHash === relay.store.getDevice('sandbox-agent')?.token_hash) break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  if (!currentConnection || currentConnection.socket.hermesAuthTokenHash !== relay.store.getDevice('sandbox-agent')?.token_hash) {
+    throw Error('ROTATED_HELLO_NOT_BOUND');
+  }
+  const staleOutcome = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error('STALE_HELLO_TIMEOUT')), 4000);
+    staleSocket.once('message', () => { clearTimeout(timer); resolve({type:'message'}); });
+    staleSocket.once('close', code => { clearTimeout(timer); resolve({type:'close',code}); });
+  });
+  staleSocket.send(JSON.stringify(hello));
+  const result = await staleOutcome;
+  if (result.type !== 'close' || result.code !== 4401 || relay.hub.get('sandbox-agent') !== currentConnection) {
+    throw Error('REVOKED_DELAYED_HELLO_REPLACED_CURRENT_SOCKET');
+  }
+  console.log('WSS_DELAYED_REVOKED_HELLO=DENIED');
+
+  let calls = 0;
+  rotatedSocket.on('message', (raw) => {
+    const message = JSON.parse(String(raw));
+    if (message.type !== 'call') return;
+    calls++;
+    rotatedSocket.send(JSON.stringify({type:'result', id:message.id, result:{content:[{type:'text',text:'synthetic-ok'}]}}));
+  });
+  const routed = await invokeTool(relay.hub,relay.store,ctx,'read_file',args,{timeoutMs:2000});
+  if (!routed.ok || routed.result.content[0]?.text !== 'synthetic-ok' || calls !== 1) {
+    throw Error('CURRENT_SOCKET_FAILED_AFTER_STALE_HELLO');
+  }
+  console.log('WSS_CURRENT_SOCKET_AFTER_STALE_HELLO=SINGLE_CALL');
 
   relay.store.deleteDevice('sandbox-agent');
   const deleted = await invokeTool(relay.hub,relay.store,ctx,'read_file',args);
@@ -146,6 +192,8 @@ try {
   console.log('HERMES_BRC_WSS_AUTH_E2E=PASS');
 } finally {
   if (goodSocket) goodSocket.terminate();
+  if (staleSocket) staleSocket.terminate();
+  if (rotatedSocket) rotatedSocket.terminate();
   await relay.close();
   rmSync(temp, { recursive: true, force: true });
 }

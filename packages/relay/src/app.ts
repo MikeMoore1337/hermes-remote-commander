@@ -354,7 +354,10 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
       Object.defineProperty(ws, 'hermesAuthTokenHash', {
         value: dev.token_hash, writable: false, configurable: false, enumerable: false,
       });
-      hub.attach(ws, dev.user_id, dev.device_id);
+      hub.attach(ws, dev.user_id, dev.device_id, () => {
+        const current = store.getDevice(dev.device_id);
+        return current?.user_id === dev.user_id && current.token_hash === dev.token_hash;
+      });
       store.touchDevice(dev.device_id);
     });
   });

@@ -74,6 +74,27 @@ class FakeSocket extends EventEmitter {
 }
 const hello = (id, tools = [{ name: 'echo', description: 'x', inputSchema: {} }]) => ({ type: 'hello', protocol: 1, device: { deviceId: id, name: id, platform: 'linux', arch: 'x64', hostname: 'h', agentVersion: '1', coreVersion: '1' }, tools });
 
+test('device hub rejects malformed hello frames without throwing', () => {
+  const hub = new DeviceHub('t', () => {});
+  try {
+    for (const frame of [
+      { type: 'hello', protocol: 1 },
+      { ...hello('devA'), device: null },
+      { ...hello('devA'), tools: null },
+      { ...hello('devA'), tools: [null] },
+      { ...hello('devA'), device: { ...hello('devA').device, name: {} } },
+    ]) {
+      const socket = new FakeSocket();
+      hub.attach(socket, 'u1', 'devA');
+      assert.doesNotThrow(() => socket.recv(frame));
+      assert.equal(socket.closed?.code, 1002);
+      assert.equal(hub.get('devA'), undefined);
+    }
+  } finally {
+    hub.close();
+  }
+});
+
 test('device hub: hello/welcome, call/result matching, protocol + id checks, default resolution', async () => {
   const hub = new DeviceHub('t', () => {});
   const a = new FakeSocket();
@@ -87,6 +108,12 @@ test('device hub: hello/welcome, call/result matching, protocol + id checks, def
   assert.equal(b.sent[0]?.type, 'welcome');
   assert.equal(hub.resolveDefault('u1'), 'devA');
   assert.equal(hub.resolveDefault('u2'), null, 'other user sees nothing');
+
+  const unavailable = new FakeSocket();
+  hub.attach(unavailable, 'u1', 'devA', () => { throw Error('store unavailable'); });
+  unavailable.recv(hello('devA'));
+  assert.equal(unavailable.closed?.code, 1011);
+  assert.equal(hub.get('devA')?.socket, b);
 
   const p = hub.call('devA', 'echo', { x: 1 }, { timeoutMs: 2000 });
   const callMsg = b.sent.find((m) => m.type === 'call');
