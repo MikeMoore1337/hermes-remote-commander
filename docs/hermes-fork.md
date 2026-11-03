@@ -61,12 +61,17 @@ and two low findings. The MCP limit does not establish complete mitigation for
 every Zod use or ingress. A compatible fix and independent security review are
 required before any runtime cutover.
 
-License inventory is incomplete. The installed `exceljs > unzipper > binary >
-buffers@0.1.1` package has no declared license in its npm metadata or installed
-files; its original repository was unavailable during review. The installed
-`@img/sharp-win32-x64@0.35.5` declares `Apache-2.0 AND LGPL-3.0-or-later`.
-Review redistribution terms and platform-specific native dependencies before
-publishing packages or images; the upstream MIT notice does not cover them all.
+The scoped `exceljs > unzipper` override uses MIT-licensed `unzipper@0.12.3`
+and removes `binary > buffers@0.1.1` from the lockfile. The MCP XLSX
+read/write/edit paths and an ordered-fixture streaming read are tested. ExcelJS
+streaming cannot read some archives produced by its own writer when sheet entries
+precede workbook metadata; the same failure occurs with the previous unzipper.
+
+License inventory remains incomplete. The installed Windows native dependency
+`@img/sharp-win32-x64@0.35.5` declares `Apache-2.0 AND LGPL-3.0-or-later` and
+includes third-party notices. Review redistribution terms, source availability
+and exact shipped platform artifacts before publishing packages or images; the
+upstream MIT notice does not cover all dependencies.
 
 The upstream automatic publishing workflow has been removed from this branch:
 it could push directly to `main` and publish npm packages and container images.
