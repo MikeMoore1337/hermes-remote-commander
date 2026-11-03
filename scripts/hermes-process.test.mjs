@@ -57,3 +57,33 @@ test('kill_process signals a real child without stopping a second child', async 
     await Promise.allSettled([childExit, otherExit]);
   }
 });
+
+test('completed nonzero shell exit is an MCP error with readable output', async () => {
+  const { configManager } = await import('../packages/agent/dist/core/config-manager.js');
+  const originalGetConfig = configManager.getConfig;
+  const originalGetValue = configManager.getValue;
+  const originalGetOrCreateClientId = configManager.getOrCreateClientId;
+  configManager.getConfig = async () => ({ blockedCommands: [], fileReadLineLimit: 1000 });
+  configManager.getValue = async () => false;
+  configManager.getOrCreateClientId = async () => 'synthetic';
+  try {
+    const windows = process.platform === 'win32';
+    const command = windows ? 'echo EXPECTED_FAILURE_OUTPUT & exit /b 7' : "printf 'EXPECTED_FAILURE_OUTPUT\\n'; exit 7";
+    const shell = windows ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh';
+    const result = await callTool('start_process', { command, shell, timeout_ms: 10000 });
+    assert.equal(result.isError, true);
+    const text = JSON.stringify(result);
+    assert.match(text, /EXPECTED_FAILURE_OUTPUT/);
+    const pid = Number(text.match(/Process (\d+) exited with code 7/)?.[1]);
+    assert.ok(Number.isSafeInteger(pid) && pid > 1);
+    const output = await callTool('read_process_output', { pid, timeout_ms: 1000 });
+    assert.equal(output.isError, true);
+    assert.match(JSON.stringify(output), /EXPECTED_FAILURE_OUTPUT/);
+    assert.match(JSON.stringify(output), /exit code 7/);
+  } finally {
+    await new Promise(resolve => setImmediate(resolve));
+    configManager.getConfig = originalGetConfig;
+    configManager.getValue = originalGetValue;
+    configManager.getOrCreateClientId = originalGetOrCreateClientId;
+  }
+});

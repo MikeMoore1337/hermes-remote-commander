@@ -135,6 +135,7 @@ const catalog = JSON.parse((await call('list_workspaces', {})).content[0].text);
 must(catalog.status === 'catalog' && catalog.workspaces.length === 2 &&
      catalog.workspaces.every(w => w.scope === 'sandbox' && w.device_status === 'online' && w.git_verified === false),
      'WORKSPACE_OWNER_CATALOG');
+const resolvedWorkspaces = [];
 for (const [project, deviceId, root, expected] of [
   ['first project', 'ci-native-one', '/workspace/projects/alpha', 'real-ci-agent-one'],
   ['second project', 'ci-native-two', '/workspace/projects/beta', 'real-ci-agent-two'],
@@ -144,6 +145,7 @@ for (const [project, deviceId, root, expected] of [
   must(result.isError !== true && resolved.status === 'resolved' && resolved.deviceId === deviceId &&
        resolved.root === root && resolved.git_verified === false && resolved.verification_required_before_write === true,
        'WORKSPACE_RESOLVE_' + project.toUpperCase().replaceAll(' ', '_'));
+  resolvedWorkspaces.push(resolved);
   const file = await call('read_file', { deviceId: resolved.deviceId, path: resolved.root + '/identity.txt' });
   must(file.isError !== true && JSON.stringify(file).includes(expected), 'WORKSPACE_ROUTED_READ_' + deviceId.toUpperCase());
 }
@@ -227,12 +229,59 @@ for (let attempt = 0; attempt < 20 && !exited; attempt++) {
 }
 must(exited, 'TWO_NATIVE_PROCESS_EXIT_OBSERVED');
 
+const failedCommand = await call('start_process', {
+  deviceId: 'ci-native-two', command: "printf 'EXPECTED_FAILURE_OUTPUT\\n'; exit 7", timeout_ms: 10000,
+});
+must(failedCommand.isError === true && JSON.stringify(failedCommand).includes('EXPECTED_FAILURE_OUTPUT') &&
+     JSON.stringify(failedCommand).includes('exited with code 7'), 'TWO_NATIVE_NONZERO_EXIT_IS_ERROR');
+const failedPid = Number(JSON.stringify(failedCommand).match(/Process (\d+) exited with code 7/)?.[1]);
+must(Number.isSafeInteger(failedPid) && failedPid > 1, 'TWO_NATIVE_FAILED_PROCESS_ID');
+const failedOutput = await call('read_process_output', { deviceId: 'ci-native-two', pid: failedPid, timeout_ms: 1000 });
+must(failedOutput.isError === true && JSON.stringify(failedOutput).includes('exit code 7') &&
+     JSON.stringify(failedOutput).includes('EXPECTED_FAILURE_OUTPUT'), 'TWO_NATIVE_NONZERO_OUTPUT_IS_ERROR');
+
 const development = await call('start_process', {
   deviceId: 'ci-native-two', timeout_ms: 10000,
   command: "mkdir -p /workspace/git-fixture && printf fixture > /workspace/git-fixture/fixture.txt && git -C /workspace/git-fixture init -q -b fixture && git -C /workspace/git-fixture add fixture.txt && git -C /workspace/git-fixture -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture && test -z \"$(git -C /workspace/git-fixture status --porcelain)\" && git -C /workspace/git-fixture rev-parse --abbrev-ref HEAD && python3 -c 'print(\"python-ok\")'",
 });
 must(development.isError !== true && JSON.stringify(development).includes('fixture') &&
      JSON.stringify(development).includes('python-ok'), 'TWO_NATIVE_REAL_GIT_AND_PYTHON');
+
+// This client explicitly verifies Git after resolution. It is not a relay write gate.
+const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+async function gitCheck(workspace) {
+  const root = shellQuote(workspace.root);
+  const origin = shellQuote(workspace.origin);
+  const branch = shellQuote(workspace.branch);
+  const command = `if [ "$(git -C ${root} rev-parse --show-toplevel 2>/dev/null)" = ${root} ] && ` +
+    `[ "$(git -C ${root} config --local --get remote.origin.url 2>/dev/null)" = ${origin} ] && ` +
+    `[ "$(git -C ${root} symbolic-ref --short HEAD 2>/dev/null)" = ${branch} ]; ` +
+    `then echo GIT_IDENTITY_MATCH; else echo GIT_IDENTITY_MISMATCH; fi`;
+  const result = await call('start_process', { deviceId: workspace.deviceId, command, timeout_ms: 10000 });
+  must(result.isError !== true, 'WORKSPACE_GIT_CHECK_COMMAND');
+  return JSON.stringify(result);
+}
+must((await gitCheck(resolvedWorkspaces[0])).includes('GIT_IDENTITY_MISMATCH'), 'WORKSPACE_NON_REPOSITORY_REFUSED');
+for (const workspace of resolvedWorkspaces) {
+  const root = shellQuote(workspace.root);
+  const command = `git -C ${root} init -q -b main && git -C ${root} remote add origin ${shellQuote(workspace.origin)} && echo GIT_FIXTURE_CREATED`;
+  const created = await call('start_process', { deviceId: workspace.deviceId, command, timeout_ms: 10000 });
+  if (created.isError === true || !JSON.stringify(created).includes('GIT_FIXTURE_CREATED')) {
+    throw Error('WORKSPACE_GIT_FIXTURE_FAILED:' + workspace.workspace + ':' + JSON.stringify(created));
+  }
+  must(true, 'WORKSPACE_GIT_FIXTURE_CREATED_' + workspace.workspace.toUpperCase());
+  must((await gitCheck(workspace)).includes('GIT_IDENTITY_MATCH'), 'WORKSPACE_GIT_ORIGIN_BRANCH_MATCH_' + workspace.workspace.toUpperCase());
+}
+const gitFixture = resolvedWorkspaces[0];
+const gitRoot = shellQuote(gitFixture.root);
+const wrongBranch = await call('start_process', { deviceId: gitFixture.deviceId, timeout_ms: 10000,
+  command: `git -C ${gitRoot} symbolic-ref HEAD refs/heads/wrong-branch && echo WRONG_BRANCH_SET` });
+must(wrongBranch.isError !== true && JSON.stringify(wrongBranch).includes('WRONG_BRANCH_SET'), 'WORKSPACE_GIT_WRONG_BRANCH_FIXTURE');
+must((await gitCheck(gitFixture)).includes('GIT_IDENTITY_MISMATCH'), 'WORKSPACE_GIT_WRONG_BRANCH_REFUSED');
+const wrongOrigin = await call('start_process', { deviceId: gitFixture.deviceId, timeout_ms: 10000,
+  command: `git -C ${gitRoot} symbolic-ref HEAD refs/heads/main && git -C ${gitRoot} remote set-url origin https://github.com/example/incorrect.git && echo WRONG_ORIGIN_SET` });
+must(wrongOrigin.isError !== true && JSON.stringify(wrongOrigin).includes('WRONG_ORIGIN_SET'), 'WORKSPACE_GIT_WRONG_ORIGIN_FIXTURE');
+must((await gitCheck(gitFixture)).includes('GIT_IDENTITY_MISMATCH'), 'WORKSPACE_GIT_WRONG_ORIGIN_REFUSED');
 
 const disallowed = await call('get_config', { deviceId: 'ci-native-one' });
 must(disallowed.isError === true, 'TWO_NATIVE_DIRECT_CONFIG_ACCESS_DENIED');

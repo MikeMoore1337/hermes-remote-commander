@@ -10,7 +10,7 @@ Hermes changes were reviewed against its source at [`f2b6bafad4dcb62059629151945
 | OAuth | PKCE, client registration, refresh and revoke | Reused; browser mutation origin guard | Recheck authorization and revocation in the target environment |
 | Windows and Linux agents | Outbound WebSocket and reconnect | Reused; stop after authorization refusal | OS isolation, reboot and device-specific acceptance |
 | Files, search and edit | Desktop Commander-derived tools | Reused; URL transfer/config tools denied, safer error and mutation handling | Cross-process write conflicts, binary and large-file parity |
-| Terminal and processes | Interactive sessions and process tools | Reused; bounded timing output and honest termination result | Complete descendant cleanup and resource limits |
+| Terminal and processes | Interactive sessions and process tools | Reused; bounded timing output, drained output streams and error reporting for completed nonzero exits | Complete descendant cleanup and resource limits |
 | Git | Shell runs locally available Git | Reused; no extra Git implementation | Verify Git in each approved agent image and workspace |
 | Multiple devices | Pairing and explicit device selection | Owner and socket-token grants checked; configured project names resolve to their device | Control Center onboarding, automatic path routing and native Windows |
 | Recovery | Reconnect with backoff | Old/foreign replies rejected; pending calls fail on disconnect | Prove real reboot/reconnect; a completed side effect cannot be undone |
@@ -37,6 +37,10 @@ directly under `/workspace/projects/` and GitHub HTTPS origins are accepted in t
 candidate; no Git operation or filesystem inspection occurs during resolution.
 The model can call `resolve_workspace` and use its result for subsequent tools;
 the result explicitly says Git and process execution are not verified.
+The two-agent test demonstrates a client checking the resolved top-level, Git
+origin and branch before proceeding, including negative cases for a missing
+repository and mismatched origin or branch. The relay does not enforce that
+check on writes; clients and the OS sandbox remain responsible for the boundary.
 
 The registry file must be a regular file, at most 16 KiB, without hard links;
 on POSIX it must be owned by root or the relay user and not group/world writable.
