@@ -1,7 +1,7 @@
 # brc-relay
 
 Relay server for **Better Remote Commander** — the self-hosted bridge between AI clients (Claude, ChatGPT) and your
-machines running [`brc-agent`](https://www.npmjs.com/package/brc-agent). One process, SQLite, your domain.
+machines running the fork's `brc-agent`. One process, SQLite, your domain.
 
 Doors it exposes:
 - `/mcp` — remote MCP (Streamable HTTP) with OAuth 2.0 (PKCE, dynamic client registration) or API-key bearer auth
@@ -10,10 +10,9 @@ Doors it exposes:
 
 ## Install & run
 
-```bash
-npm i -g brc-relay
-PUBLIC_URL=https://brc.example.com BRC_ADMIN_PASSWORD=change-me BRC_SESSION_SECRET=random-string TRUST_PROXY=true brc-relay
-```
+This Hermes fork is a development candidate. The public `brc-relay` npm package
+is upstream and does not contain the fork changes. Build from the [fork source](https://github.com/MikeMoore1337/hermes-remote-commander)
+only within an approved isolated environment; publication and activation require separate approval.
 Put it behind any HTTPS reverse proxy or tunnel that forwards WebSockets (Caddy, nginx, Cloudflare Tunnel, ngrok).
 Docker Compose profiles for VPS / Cloudflare Tunnel / ngrok are in the repository.
 
@@ -33,4 +32,4 @@ Docker Compose profiles for VPS / Cloudflare Tunnel / ngrok are in the repositor
 - **Claude**: Settings → Connectors → add `https://brc.example.com/mcp` → sign in → Allow
 - **ChatGPT (MCP)**: same URL as a connector
 
-Full docs: https://github.com/shahidx0x/better-remote-commander · License MIT.
+Full docs: https://github.com/MikeMoore1337/hermes-remote-commander · License MIT.

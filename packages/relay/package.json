@@ -37,13 +37,13 @@
                       },
     "repository":  {
                        "type":  "git",
-                       "url":  "https://github.com/shahidx0x/better-remote-commander.git",
+                       "url":  "https://github.com/MikeMoore1337/hermes-remote-commander.git",
                        "directory":  "packages/relay"
                    },
     "engines":  {
                     "node":  "\u003e=22.13"
                 },
-    "homepage":  "https://github.com/shahidx0x/better-remote-commander#readme",
+    "homepage":  "https://github.com/MikeMoore1337/hermes-remote-commander#readme",
     "keywords":  [
                      "mcp",
                      "claude",
