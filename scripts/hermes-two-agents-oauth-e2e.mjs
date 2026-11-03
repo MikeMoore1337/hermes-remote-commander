@@ -130,6 +130,26 @@ must(!tools.has('get_config') && !tools.has('send_file_transfer') &&
      'TWO_NATIVE_MCP_RESTRICTED_TOOLSET');
 const call = (name, args) => rpc('tools/call', { name, arguments: args });
 
+must(tools.has('list_workspaces') && tools.has('resolve_workspace'), 'WORKSPACE_TOOLS_ADVERTISED');
+const catalog = JSON.parse((await call('list_workspaces', {})).content[0].text);
+must(catalog.status === 'catalog' && catalog.workspaces.length === 2 &&
+     catalog.workspaces.every(w => w.scope === 'sandbox' && w.device_status === 'online' && w.git_verified === false),
+     'WORKSPACE_OWNER_CATALOG');
+for (const [project, deviceId, root, expected] of [
+  ['first project', 'ci-native-one', '/workspace/projects/alpha', 'real-ci-agent-one'],
+  ['second project', 'ci-native-two', '/workspace/projects/beta', 'real-ci-agent-two'],
+]) {
+  const result = await call('resolve_workspace', { project });
+  const resolved = JSON.parse(result.content[0].text);
+  must(result.isError !== true && resolved.status === 'resolved' && resolved.deviceId === deviceId &&
+       resolved.root === root && resolved.git_verified === false && resolved.verification_required_before_write === true,
+       'WORKSPACE_RESOLVE_' + project.toUpperCase().replaceAll(' ', '_'));
+  const file = await call('read_file', { deviceId: resolved.deviceId, path: resolved.root + '/identity.txt' });
+  must(file.isError !== true && JSON.stringify(file).includes(expected), 'WORKSPACE_ROUTED_READ_' + deviceId.toUpperCase());
+}
+const unknownWorkspace = await call('resolve_workspace', { project: '../../production' });
+must(unknownWorkspace.isError === true, 'WORKSPACE_UNKNOWN_OR_PRODUCTION_REFUSED');
+
 const list = await call('list_devices', {});
 const discovered = JSON.parse(list.content[0].text).devices;
 const ids = new Set(discovered.filter((x) => x.online).map((x) => x.deviceId));
@@ -184,7 +204,7 @@ must(terminal.isError !== true &&
 
 const development = await call('start_process', {
   deviceId: 'ci-native-two', timeout_ms: 10000,
-  command: "git -C /workspace init -q -b fixture && git -C /workspace add identity.txt && git -C /workspace -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture && test -z \"$(git -C /workspace status --porcelain)\" && git -C /workspace rev-parse --abbrev-ref HEAD && python3 -c 'print(\"python-ok\")'",
+  command: "mkdir -p /workspace/git-fixture && printf fixture > /workspace/git-fixture/fixture.txt && git -C /workspace/git-fixture init -q -b fixture && git -C /workspace/git-fixture add fixture.txt && git -C /workspace/git-fixture -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture && test -z \"$(git -C /workspace/git-fixture status --porcelain)\" && git -C /workspace/git-fixture rev-parse --abbrev-ref HEAD && python3 -c 'print(\"python-ok\")'",
 });
 must(development.isError !== true && JSON.stringify(development).includes('fixture') &&
      JSON.stringify(development).includes('python-ok'), 'TWO_NATIVE_REAL_GIT_AND_PYTHON');
@@ -204,6 +224,8 @@ const pauseResult = await call('read_file', {
   deviceId: 'ci-native-two', path: '/workspace/identity.txt',
 });
 must(pauseResult.isError === true, 'TWO_NATIVE_PAUSED_DEVICE_REFUSED');
+const pausedWorkspace = await call('resolve_workspace', { project: 'second project' });
+must(pausedWorkspace.isError === true, 'WORKSPACE_PAUSED_DEVICE_REFUSED');
 const unaffected = await call('read_file', {
   deviceId: 'ci-native-one', path: '/workspace/identity.txt',
 });

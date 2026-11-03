@@ -62,6 +62,9 @@ step('mcp initialize', init.status === 200 && init.body?.result?.serverInfo?.nam
 const list = await rpc('tools/list', {}, 2);
 const names = (list.body?.result?.tools ?? []).map((t) => t.name);
 step('mcp tools/list', names.includes('list_devices') && names.includes('read_file') && names.includes('start_process'), `${names.length} tools`);
+step('workspace tools absent without registry', !names.includes('list_workspaces') && !names.includes('resolve_workspace'));
+const unconfigured = await rpc('tools/call', { name: 'resolve_workspace', arguments: { project: 'alpha' } }, 20);
+step('unconfigured workspace refused', unconfigured.body?.result?.isError === true);
 
 const devs = await rpc('tools/call', { name: 'list_devices', arguments: {} }, 3);
 const devJson = JSON.parse(devs.body?.result?.content?.[0]?.text ?? '{}');

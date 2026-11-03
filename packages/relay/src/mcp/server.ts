@@ -7,9 +7,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { DeviceHub } from '../device-hub.js';
 import type { SqliteStore } from '../store/sqlite.js';
-import { invokeTool, listUserDevices, type InvokeContext } from './invoke.js';
+import { invokeTool, listUserDevices, deviceGrantStatus, type InvokeContext } from './invoke.js';
 import { isPermittedRemoteTool } from './hermes-policy.js';
 import { pinnedToolCatalog } from './hermes-tool-catalog.js';
+import { LIST_WORKSPACES_TOOL, RESOLVE_WORKSPACE_TOOL, listWorkspaces, resolveWorkspace, type Workspace } from './hermes-workspaces.js';
 
 export type McpContext = InvokeContext;
 
@@ -40,19 +41,27 @@ export function liveTools(hub: DeviceHub, store: SqliteStore, userId: string) {
   return { online: online.length, tools: [...merged.values()] };
 }
 
-export function createMcpServer(hub: DeviceHub, store: SqliteStore, ctx: McpContext, relayVersion: string): Server {
+export function createMcpServer(hub: DeviceHub, store: SqliteStore, ctx: McpContext, relayVersion: string, workspaces: Workspace[] = []): Server {
   const server = new Server({ name: 'brc', version: relayVersion }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const { online } = liveTools(hub, store, ctx.userId);
     return { tools: [{ ...LIST_DEVICES_TOOL, description: `${LIST_DEVICES_TOOL.description} ${online} device(s) currently online.` },
-      ...pinnedToolCatalog().map(t => ({ ...t, inputSchema: withDeviceId(t.inputSchema) }))] };
+      ...pinnedToolCatalog().map(t => ({ ...t, inputSchema: withDeviceId(t.inputSchema) })),
+      ...(workspaces.length ? [LIST_WORKSPACES_TOOL, RESOLVE_WORKSPACE_TOOL] : [])] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args } = req.params;
     if (name === 'list_devices') {
       return { content: [{ type: 'text', text: JSON.stringify({ devices: listUserDevices(hub, store, ctx.userId) }, null, 2) }] };
+    }
+    if (workspaces.length && (name === 'list_workspaces' || name === 'resolve_workspace')) {
+      const state = (deviceId: string) => deviceGrantStatus(hub, store, ctx.userId, deviceId);
+      const invalidListArgs = name === 'list_workspaces' && args && Object.keys(args).length !== 0;
+      const result = invalidListArgs ? { status: 'refused', reason: 'invalid_arguments' } :
+        name === 'list_workspaces' ? listWorkspaces(workspaces, state) : resolveWorkspace(args, workspaces, state);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: result.status === 'refused' };
     }
     const out = await invokeTool(hub, store, ctx, name, args as Record<string, unknown> | undefined);
     if (!out.ok) return { content: [{ type: 'text', text: out.message }], isError: true };
