@@ -25,10 +25,12 @@ export function deviceGrantStatus(hub: DeviceHub, store: SqliteStore, userId: st
 }
 
 export function listUserDevices(hub: DeviceHub, store: SqliteStore, userId: string) {
-  const online = new Set(hub.list(userId).map((d) => d.deviceId));
-  return store.listDevices(userId).map((d) => ({
-    deviceId: d.device_id, name: d.name, platform: d.platform, online: online.has(d.device_id), paused: !!d.paused, lastSeen: d.last_seen,
-  }));
+  return store.listDevices(userId).map((d) => {
+    const dev = hub.get(d.device_id);
+    const online = !!dev && dev.ownerId === userId &&
+      (dev.socket as typeof dev.socket & { hermesAuthTokenHash?: string }).hermesAuthTokenHash === d.token_hash;
+    return { deviceId: d.device_id, name: d.name, platform: d.platform, online, paused: !!d.paused, lastSeen: d.last_seen };
+  });
 }
 
 export async function invokeTool(

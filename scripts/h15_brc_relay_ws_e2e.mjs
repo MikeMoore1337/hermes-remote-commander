@@ -13,7 +13,8 @@ const root = process.cwd();
 const requireRelay = createRequire(path.join(root, 'packages/relay/package.json'));
 const WebSocket = requireRelay('ws');
 const { buildRelay } = await import(pathToFileURL(path.join(root, 'packages/relay/dist/app.js')).href);
-const { invokeTool } = await import(pathToFileURL(path.join(root, 'packages/relay/dist/mcp/invoke.js')).href);
+const { invokeTool, listUserDevices } = await import(pathToFileURL(path.join(root, 'packages/relay/dist/mcp/invoke.js')).href);
+const { liveTools } = await import(pathToFileURL(path.join(root, 'packages/relay/dist/mcp/server.js')).href);
 const temp = mkdtempSync(path.join(tmpdir(), 'hermes-brc-wss-auth-'));
 const secret = () => randomBytes(32).toString('hex');
 const relay = buildRelay({
@@ -120,6 +121,13 @@ try {
   }
   console.log('WSS_AUTH_SOCKET_TOKEN_HASH=IMMUTABLY_BOUND');
 
+  relay.store.setDevicePaused('sandbox-agent', true);
+  const pausedDevice = listUserDevices(relay.hub, relay.store, user.id)[0];
+  if (!pausedDevice?.online || !pausedDevice.paused || liveTools(relay.hub, relay.store, user.id).online !== 0) {
+    throw Error('PAUSED_CONNECTED_DEVICE_STATE_INVALID');
+  }
+  relay.store.setDevicePaused('sandbox-agent', false);
+
   // A second approved owner must not claim an existing device ID by polling
   // an unrelated pairing grant. No credential or ownership may change.
   const foreign = relay.store.upsertUser('foreign-ci-owner', secret());
@@ -143,6 +151,9 @@ try {
   const newToken = relay.store.issueDeviceToken('sandbox-agent',user.id,'sandbox-agent','linux');
   const rotated = await invokeTool(relay.hub,relay.store,ctx,'read_file',args);
   if (rotated.ok || rotated.status !== 403) throw Error('OLD_SOCKET_AUTH_AFTER_REKEY');
+  if (listUserDevices(relay.hub, relay.store, user.id)[0]?.online || liveTools(relay.hub, relay.store, user.id).online !== 0) {
+    throw Error('REVOKED_SOCKET_REPORTED_ONLINE');
+  }
   console.log('WSS_ROTATED_OLD_SOCKET_MCP=DENIED');
 
   const current = await connectOnce(base, { headers: { Authorization: 'Bearer ' + newToken } });

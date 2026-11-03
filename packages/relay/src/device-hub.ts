@@ -124,7 +124,7 @@ export class DeviceHub {
 
   /** Route a tool call to a device. Throws if offline or timed out. */
   call(deviceId: string, tool: string, args: Record<string, unknown>, opts: { client?: { name?: string; version?: string }; timeoutMs?: number } = {}): Promise<ToolResult> {
-    const dev = this.devices.get(deviceId);
+    const dev = this.get(deviceId);
     if (!dev) return Promise.reject(new Error(`DEVICE_OFFLINE: ${deviceId}`));
     if (!dev.tools.some((t) => t.name === tool)) return Promise.reject(new Error(`UNKNOWN_TOOL: ${tool}`));
     const id = randomUUID();
@@ -141,14 +141,17 @@ export class DeviceHub {
 
   list(ownerId?: string): DeviceSummary[] {
     return [...this.devices.values()]
-      .filter((d) => !ownerId || d.ownerId === ownerId)
+      .filter((d) => d.socket.readyState === d.socket.OPEN && (!ownerId || d.ownerId === ownerId))
       .map((d) => ({
         deviceId: d.info.deviceId, name: d.info.name, platform: d.info.platform, hostname: d.info.hostname,
         agentVersion: d.info.agentVersion, online: true, lastSeen: d.lastSeen, toolCount: d.tools.length,
       }));
   }
 
-  get(deviceId: string): ConnectedDevice | undefined { return this.devices.get(deviceId); }
+  get(deviceId: string): ConnectedDevice | undefined {
+    const dev = this.devices.get(deviceId);
+    return dev && dev.socket.readyState === dev.socket.OPEN ? dev : undefined;
+  }
 
   /** Single online device for an owner, or null when 0 or >1 (caller must ask for deviceId). */
   resolveDefault(ownerId?: string): string | null {

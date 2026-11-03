@@ -95,6 +95,21 @@ test('device hub rejects malformed hello frames without throwing', () => {
   }
 });
 
+test('device hub treats a closing socket as offline', async () => {
+  const hub = new DeviceHub('t', () => {});
+  try {
+    const socket = new FakeSocket();
+    hub.attach(socket, 'u1', 'devA');
+    socket.recv(hello('devA'));
+    socket.readyState = 2;
+    assert.equal(hub.get('devA'), undefined);
+    assert.equal(hub.list('u1').length, 0);
+    await assert.rejects(hub.call('devA', 'echo', {}, {timeoutMs: 50}), /DEVICE_OFFLINE/);
+  } finally {
+    hub.close();
+  }
+});
+
 test('device hub: hello/welcome, call/result matching, protocol + id checks, default resolution', async () => {
   const hub = new DeviceHub('t', () => {});
   const a = new FakeSocket();
