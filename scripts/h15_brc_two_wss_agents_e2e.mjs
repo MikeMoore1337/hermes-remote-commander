@@ -15,6 +15,7 @@ const WS = requireRelay('ws');
 const { buildRelay } = await import(pathToFileURL(path.join(pwd, 'packages/relay/dist/app.js')).href);
 const { invokeTool, listUserDevices } = await import(pathToFileURL(path.join(pwd, 'packages/relay/dist/mcp/invoke.js')).href);
 const { liveTools } = await import(pathToFileURL(path.join(pwd, 'packages/relay/dist/mcp/server.js')).href);
+const { observation } = await import(pathToFileURL(path.join(pwd, 'packages/relay/dist/hermes-observer.js')).href);
 
 const tmp = mkdtempSync(path.join(tmpdir(), 'hermes-two-agents-'));
 const secret = () => randomBytes(24).toString('hex');
@@ -49,8 +50,8 @@ try {
   if (!owner) throw Error('MISSING_SYNTHETIC_USER');
 
   const devices = ['sandbox-one', 'sandbox-two'];
-  for (const id of devices) {
-    const credential = relay.store.issueDeviceToken(id, owner.id, id, 'linux-test');
+  for (const [index, id] of devices.entries()) {
+    const credential = relay.store.issueDeviceToken(id, owner.id, index === 0 ? 'Fixture One' : 'Fixture Two', 'linux-test');
     const socket = new WS('ws://127.0.0.1:' + addr.port + '/ws', {
       headers: { Authorization: 'Bearer ' + credential }
     });
@@ -74,6 +75,17 @@ try {
     }));
   }
   assert(await until(() => relay.hub.list(owner.id).length === 2), 'TWO_AGENT_REAL_WSS_ONLINE');
+  const workspaces = devices.map((deviceId, index) => ({ name: index ? 'beta' : 'alpha', aliases: [], deviceId,
+    root: index ? '/workspace/projects/beta' : '/workspace/projects/alpha',
+    origin: index ? 'https://github.com/example/beta' : 'https://github.com/example/alpha', branch: 'main', scope: 'sandbox' }));
+  const otherOwner = relay.store.upsertUser('other-fixture', secret());
+  relay.store.issueDeviceToken('foreign-device', otherOwner.id, 'Other Owner', 'linux-test');
+  workspaces.push({ name: 'foreign', aliases: [], deviceId: 'foreign-device', root: '/workspace/projects/foreign',
+    origin: 'https://github.com/example/foreign', branch: 'main', scope: 'sandbox' });
+  let snapshot = observation(relay.hub, relay.store, owner.id, workspaces);
+  assert(snapshot.devices.length === 2 && snapshot.workspaces.length === 2 &&
+    snapshot.devices.every(d => d.status === 'online') && snapshot.workspaces.every(w => w.state === 'reachable_not_git_verified'),
+    'TWO_AGENT_OBSERVER_CURRENT_SOCKETS');
   assert(relay.hub.resolveDefault(owner.id) === null, 'TWO_AGENT_AMBIGUOUS_ROUTING_REJECTED');
   const toolNames = new Set(liveTools(relay.hub, relay.store, owner.id).tools.map((t) => t.name));
   assert(toolNames.has('read_file') && !toolNames.has('get_config'), 'TWO_AGENT_GATEWAY_TOOL_FILTER');
@@ -93,6 +105,9 @@ try {
   });
   assert(!forbidden.ok && forbidden.status === 403, 'TWO_AGENT_UNSAFE_TOOL_DENIED');
   relay.store.setDevicePaused('sandbox-two', true);
+  snapshot = observation(relay.hub, relay.store, owner.id, workspaces);
+  assert(snapshot.devices.find(d => d.name === 'Fixture Two')?.status === 'paused' && snapshot.workspaces.find(w => w.name === 'beta')?.state === 'not_ready',
+    'TWO_AGENT_OBSERVER_PAUSE_ENFORCED');
   const paused = await invokeTool(relay.hub, relay.store, ctx, 'read_file', {
     deviceId: 'sandbox-two', path: 'fixture',
   });
@@ -108,6 +123,15 @@ try {
   const seen = listUserDevices(relay.hub, relay.store, owner.id);
   assert(seen.length === 2 && seen.filter((d) => d.online).length === 1,
     'TWO_AGENT_REGISTRY_OFFLINE_VISIBLE');
+  snapshot = observation(relay.hub, relay.store, owner.id, workspaces);
+  assert(snapshot.devices.find(d => d.name === 'Fixture Two')?.status === 'offline' && snapshot.workspaces.find(w => w.name === 'beta')?.state === 'not_ready',
+    'TWO_AGENT_OBSERVER_OFFLINE_ENFORCED');
+  assert(!JSON.stringify(snapshot).includes('sandbox-one') && !JSON.stringify(snapshot).includes('sandbox-two'),
+    'TWO_AGENT_OBSERVER_REDACTS_IDS');
+  relay.store.issueDeviceToken('sandbox-one', owner.id, 'Fixture One', 'linux-test');
+  snapshot = observation(relay.hub, relay.store, owner.id, workspaces);
+  assert(snapshot.devices.find(d => d.name === 'Fixture One')?.status === 'offline' &&
+    snapshot.workspaces.find(w => w.name === 'alpha')?.state === 'not_ready', 'TWO_AGENT_OBSERVER_REVOKED_SOCKET');
   console.log('HERMES_BRC_TWO_WSS_AGENT_ROUTING_E2E=PASS');
 } finally {
   for (const socket of sockets) {
