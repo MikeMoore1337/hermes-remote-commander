@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { runSuite } from './e2e-suite.mjs';
 
 const PORT = Number(process.env.E2E_PORT ?? 3555);
 const base = `http://localhost:${PORT}`;
@@ -30,16 +31,6 @@ async function waitFor(fn, timeoutMs, what) {
   throw new Error(`timeout waiting for ${what}`);
 }
 
-function runScript(script, ...args) {
-  return new Promise((resolve) => {
-    const p = spawn(process.execPath, [script, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    p.stdout.on('data', (d) => { out += d; });
-    p.stderr.on('data', (d) => { out += d; });
-    p.on('close', () => resolve(out));
-  });
-}
-
 let failed = 0;
 try {
   start('relay', [relayCli], { PORT: String(PORT), PUBLIC_URL: base, BRC_ADMIN_PASSWORD: pass, BRC_SESSION_SECRET: 'e2e', BRC_DB: path.join(scratch, 'relay.sqlite'), LOG_LEVEL: 'warn' });
@@ -50,7 +41,7 @@ try {
 
   let r = await fetch(`${base}/auth/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ username: 'admin', password: pass, returnTo: '/' }) });
   const cookie = (r.headers.get('set-cookie') ?? '').split(';')[0];
-  r = await fetch(`${base}/device/approve`, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ user_code: code, decision: 'allow' }) });
+  r = await fetch(`${base}/device/approve`, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ user_code: code, decision: 'allow' }) });
   if (r.status !== 200) throw new Error(`approve failed: ${r.status}`);
   await waitFor(async () => (await (await fetch(`${base}/health`)).json()).devices === 1, 20_000, 'agent online');
   console.log(`relay + agent up on ${base} (pairing code ${code})\n`);
@@ -58,10 +49,10 @@ try {
   // rate-limit test must run last: it locks the admin login for 5 minutes.
   for (const s of ['scripts/e2e-oauth.mjs', 'scripts/e2e-admin.mjs']) {
     console.log(`== ${s}`);
-    const out = await runScript(s, base, 'admin', pass);
+    const { out, failures } = await runSuite(s, base, 'admin', pass);
     process.stdout.write(out.split('\n').filter((l) => /^(PASS|FAIL)/.test(l)).map((l) => '  ' + l.slice(0, 110)).join('\n') + '\n');
-    const f = (out.match(/^FAIL/gm) ?? []).length;
-    if (f || !/^PASS/m.test(out)) { failed += f || 1; if (!/^PASS/m.test(out)) console.log('  (suite crashed)\n' + out.slice(-600)); }
+    failed += failures;
+    if (failures && !/^FAIL/m.test(out)) console.log('  (suite failed)\n' + out.slice(-600));
   }
 } catch (e) {
   failed++;

@@ -3,7 +3,7 @@
 const [base, user, pass] = process.argv.slice(2);
 const form = (o) => new URLSearchParams(o);
 const step = (n, ok, extra = '') => console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}${extra ? '  ' + extra : ''}`);
-const post = (path, body, cookie) => fetch(`${base}${path}`, { method: 'POST', redirect: 'manual', headers: { ...(cookie ? { cookie } : {}), 'content-type': 'application/x-www-form-urlencoded' }, body: form(body) });
+const post = (path, body, cookie) => fetch(`${base}${path}`, { method: 'POST', redirect: 'manual', headers: { ...(cookie ? { cookie, origin: base } : {}), 'content-type': 'application/x-www-form-urlencoded' }, body: form(body) });
 
 let r = await post('/auth/login', { username: user, password: pass, returnTo: '/admin' });
 const cookie = (r.headers.get('set-cookie') ?? '').split(';')[0];

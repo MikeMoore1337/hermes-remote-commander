@@ -39,7 +39,7 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
     let output = `Started ${searchTypeText} session: ${result.sessionId}\n`;
     output += `Pattern: "${parsed.data.pattern}"\n`;
     output += `Path: ${parsed.data.path}\n`;
-    output += `Status: ${result.isComplete ? 'COMPLETED' : 'RUNNING'}\n`;
+    output += `Status: ${result.isError ? 'INCOMPLETE' : result.isComplete ? 'COMPLETED' : 'RUNNING'}\n`;
     output += `Runtime: ${Math.round(result.runtime)}ms\n`;
     output += `Total results: ${result.totalResults}\n\n`;
 
@@ -60,12 +60,15 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
     }
 
     if (result.isComplete) {
-      output += `\n✅ Search completed.`;
+      output += result.isError
+        ? `\n⚠️ Search incomplete. Results may be partial; narrow the path or increase timeout_ms.`
+        : `\n✅ Search completed.`;
     } else {
       output += `\n🔄 Search in progress. Use get_more_search_results to get more results.`;
     }
 
     return {
+      isError: result.isError,
       content: [{ type: "text", text: output }],
     };
   } catch (error) {
@@ -112,7 +115,7 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
 
     // Format results for display
     let output = `Search session: ${parsed.data.sessionId}\n`;
-    output += `Status: ${results.isComplete ? 'COMPLETED' : 'IN PROGRESS'}\n`;
+    output += `Status: ${results.isError ? 'INCOMPLETE' : results.isComplete ? 'COMPLETED' : 'IN PROGRESS'}\n`;
     output += `Runtime: ${Math.round(results.runtime / 1000)}s\n`;
     output += `Total results found: ${results.totalResults} (${results.totalMatches} matches)\n`;
     
@@ -153,15 +156,18 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
     }
 
     if (results.isComplete) {
-      output += `\n✅ Search completed.`;
+      output += results.isError
+        ? `\n⚠️ Search incomplete. Results may be partial; narrow the path or increase timeout_ms.`
+        : `\n✅ Search completed.`;
       
       // Warn users if search was incomplete due to permission issues
-      if (results.wasIncomplete) {
+      if (results.wasIncomplete && !results.isError) {
         output += `\n⚠️  Warning: Some files were inaccessible due to permissions. Results may be incomplete.`;
       }
     }
 
     return {
+      isError: results.isError,
       content: [{ type: "text", text: output }],
     };
   } catch (error) {

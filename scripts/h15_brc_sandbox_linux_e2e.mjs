@@ -1,0 +1,401 @@
+#!/usr/bin/env node
+// Genuine patched BRC tool dispatcher exercised under kernel/container OS
+// constraints. Runs only in a disposable Docker CI namespace (#371).
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { setTimeout as pause } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { EventEmitter } from 'node:events';
+
+const source = '/app/packages/agent/dist/dispatcher.js';
+const { listTools, callTool } = await import(pathToFileURL(source).href);
+const failures = [];
+function assert(value, label) {
+  if (!value) failures.push(label);
+  else console.log(label + '=PASS');
+}
+assert(process.getuid?.() === 65534, 'OS_NON_ROOT');
+assert(process.env.BRC_HOME?.startsWith('/workspace/'), 'OS_ISOLATED_HOME');
+
+const deniedTools = ['get_config', 'get_recent_tool_calls', 'set_config_value',
+  'prepare_file_transfer', 'send_file_transfer', 'receive_file_transfer'];
+const listed = new Set(listTools().map((tool) => tool.name));
+for (const tool of deniedTools) {
+  const result = await callTool(tool, {});
+  assert(!listed.has(tool) && result.isError === true, 'MCP_DENIED_' + tool.toUpperCase());
+}
+
+// The candidate deliberately retains REAL file read/write, but the kernel's
+// read-only source mount must reject a write despite an empty allowedDirs ACL.
+const allowed = await callTool('write_file', {
+  path: '/workspace/allowed.txt', content: 'approved-workspace-data',
+  mode: 'rewrite',
+});
+assert(allowed.isError !== true &&
+       fs.readFileSync('/workspace/allowed.txt', 'utf8').includes('approved-workspace-data'),
+       'MCP_WORKSPACE_WRITE');
+
+// The filesystem may use epoch zero when birthtime is unavailable. Exercise
+// the real dispatcher/formatter with controlled stats, not host metadata.
+const metadataPath = '/workspace/birthtime-fixture.txt';
+fs.writeFileSync(metadataPath, 'preserve-content');
+const originalStat = fsPromises.stat;
+let reportedBirthtime = new Date('2020-01-02T03:04:05.000Z');
+try {
+  fsPromises.stat = async (...args) => {
+    const stats = await originalStat(...args);
+    if (args[0] === metadataPath) Object.defineProperty(stats, 'birthtime', {value: reportedBirthtime});
+    return stats;
+  };
+  const known = await callTool('get_file_info', {path: metadataPath});
+  const knownText = known.content.map(item => item.text || '').join('\n');
+  assert(known.isError !== true && knownText.includes('created: "2020-01-02T03:04:05.000Z"') &&
+    !knownText.includes('createdStatus:'), 'MCP_FILE_INFO_KNOWN_BIRTHTIME_UNCHANGED');
+  reportedBirthtime = new Date(0);
+  const unknown = await callTool('get_file_info', {path: metadataPath});
+  const unknownText = unknown.content.map(item => item.text || '').join('\n');
+  assert(unknown.isError !== true && /^created: null$/m.test(unknownText) &&
+    /^createdStatus: unavailable_or_epoch$/m.test(unknownText) &&
+    /^size: 16$/m.test(unknownText), 'MCP_FILE_INFO_EPOCH_AMBIGUOUS');
+  reportedBirthtime = new Date(-1);
+  const beforeEpoch = await callTool('get_file_info', {path: metadataPath});
+  const beforeEpochText = beforeEpoch.content.map(item => item.text || '').join('\n');
+  assert(beforeEpoch.isError !== true && beforeEpochText.includes('created: "1969-12-31T23:59:59.999Z"') &&
+    !beforeEpochText.includes('createdStatus:'), 'MCP_FILE_INFO_PRE_EPOCH_UNCHANGED');
+  reportedBirthtime = new Date(0);
+  const guarded = await callTool('write_file', {path: metadataPath, content: 'unsafe'});
+  assert(guarded.isError === true && fs.readFileSync(metadataPath, 'utf8') === 'preserve-content',
+    'MCP_FILE_INFO_WRITE_GUARD_UNCHANGED');
+} finally {
+  fsPromises.stat = originalStat;
+}
+
+const editPath = '/workspace/edit-conflict.txt';
+const editBefore = 'same\nsame\nunique-before\n';
+fs.writeFileSync(editPath, editBefore);
+const conflict = await callTool('edit_block', {
+  file_path: editPath, old_string: 'same', new_string: 'wrong', expected_replacements: 1,
+});
+assert(conflict.isError === true && fs.readFileSync(editPath, 'utf8') === editBefore,
+       'MCP_EDIT_CONFLICT_ERROR_NO_WRITE');
+const edited = await callTool('edit_block', {
+  file_path: editPath, old_string: 'unique-before', new_string: 'unique-after', expected_replacements: 1,
+});
+assert(edited.isError !== true &&
+       fs.readFileSync(editPath, 'utf8') === 'same\nsame\nunique-after\n',
+       'MCP_EDIT_UNIQUE_SUCCESS');
+
+// Hold a real edit after its read so conflicting MCP mutations overlap.
+const racePath = '/workspace/mutation-race.txt';
+fs.writeFileSync(racePath, 'before\n');
+const originalReadFile = fsPromises.readFile;
+let readObserved, releaseRead, held = false;
+const readStarted = new Promise(resolve => { readObserved = resolve; });
+const readGate = new Promise(resolve => { releaseRead = resolve; });
+let firstEdit;
+try {
+  fsPromises.readFile = async (...args) => {
+    const value = await originalReadFile(...args);
+    if (!held && args[0] === racePath && args[1]?.signal) {
+      held = true;
+      readObserved();
+      await readGate;
+    }
+    return value;
+  };
+  firstEdit = callTool('edit_block', {
+    file_path: racePath, old_string: 'before', new_string: 'A-after', expected_replacements: 1,
+  });
+  await Promise.race([readStarted, pause(5000).then(() => { throw Error('MUTATION_BARRIER_TIMEOUT'); })]);
+  for (const [name, args] of [
+    ['edit_block', {file_path: racePath, old_string: 'before', new_string: 'B-after', expected_replacements: 1}],
+    ['write_file', {path: '/workspace/blocked.txt', content: 'wrong', mode: 'rewrite'}],
+    ['move_file', {source: racePath, destination: '/workspace/blocked-move.txt'}],
+    ['create_directory', {path: '/workspace/blocked-dir'}],
+    ['write_pdf', {path: '/workspace/blocked.pdf', content: 'wrong'}],
+  ]) {
+    const blocked = await callTool(name, args);
+    const text = blocked.content.map(item => item.text || '').join('\n');
+    assert(blocked.isError === true && text.includes('HERMES_FILE_MUTATION_BUSY'),
+      'MCP_MUTATION_BUSY_' + name.toUpperCase());
+  }
+  const info = await callTool('get_file_info', {path: racePath});
+  assert(info.isError !== true, 'MCP_READ_DURING_MUTATION');
+} finally {
+  releaseRead();
+  fsPromises.readFile = originalReadFile;
+}
+const firstResult = await firstEdit;
+assert(firstResult.isError !== true && fs.readFileSync(racePath, 'utf8') === 'A-after\n' &&
+  !fs.existsSync('/workspace/blocked.txt') && !fs.existsSync('/workspace/blocked-move.txt') &&
+  !fs.existsSync('/workspace/blocked-dir') && !fs.existsSync('/workspace/blocked.pdf'),
+  'MCP_MUTATION_FIRST_WRITE_PRESERVED');
+const invalidEdit = await callTool('edit_block', {});
+const afterError = await callTool('write_file', {path:'/workspace/unlocked.txt', content:'ok', mode:'rewrite'});
+assert(invalidEdit.isError === true && afterError.isError !== true &&
+  fs.readFileSync('/workspace/unlocked.txt', 'utf8') === 'ok', 'MCP_MUTATION_GUARD_RELEASED_ON_ERROR');
+
+// Synthetic session objects exercise the actual manager without signalling any OS process.
+const terminalPath = source.replace('/dispatcher.js', '/core/terminal-manager.js');
+const { terminalManager } = await import(pathToFileURL(terminalPath).href);
+
+// Synthetic stream chunks exercise the compiled manager and MCP formatter;
+// no OS process or production session is signalled.
+const timingSpawn = childProcess.spawn;
+let timingChild;
+let timingChunks = 130;
+try {
+  childProcess.spawn = () => {
+    timingChild = new EventEmitter();
+    timingChild.pid = 2147483600;
+    timingChild.stdout = new EventEmitter();
+    timingChild.stderr = new EventEmitter();
+    timingChild.stdin = {destroyed:false, write:()=>true};
+    setImmediate(() => {
+      for (let i = 0; i < timingChunks; i++) {
+        (i % 2 ? timingChild.stderr : timingChild.stdout).emit('data', Buffer.from('event\n'));
+      }
+      timingChild.stdout.emit('data', Buffer.from('>>> '));
+    });
+    return timingChild;
+  };
+  syncBuiltinESMExports();
+  const timing = await terminalManager.executeCommand('synthetic', 1000, '/bin/sh', true);
+  const recorded = JSON.stringify(timing.timingInfo?.outputEvents);
+  assert(timing.timingInfo?.outputEvents?.length === 128 && timing.timingInfo.outputEventsTruncated === true &&
+    !timing.timingInfo.outputEvents.some(event => event.matchedPattern), 'TIMING_BOUNDED_BEFORE_REPLY');
+  timingChild.stdout.emit('data', Buffer.from('late>'));
+  timingChild.stderr.emit('data', Buffer.from('late-error\n'));
+  assert(JSON.stringify(timing.timingInfo?.outputEvents) === recorded, 'TIMING_STABLE_AFTER_REPLY');
+  timingChild.emit('exit', 0);
+
+  const mcpTiming = await callTool('start_process', {
+    command:'node -e "0"', shell:'/bin/sh', timeout_ms:1000, verbose_timing:true,
+  });
+  assert(mcpTiming.isError !== true && mcpTiming.content.some(item =>
+    item.text?.includes('HERMES_TIMING_EVENTS_TRUNCATED') && item.text.includes('128 recorded')),
+    'MCP_TIMING_TRUNCATION_DISCLOSED');
+  timingChild.emit('exit', 0);
+
+  timingChunks = 2;
+  const brief = await terminalManager.executeCommand('synthetic', 1000, '/bin/sh', true);
+  assert(brief.timingInfo?.outputEvents?.length === 3 && !brief.timingInfo.outputEventsTruncated &&
+    brief.timingInfo.outputEvents[2].matchedPattern === 'quick_pattern', 'TIMING_SHORT_TRACE_UNCHANGED');
+  timingChild.emit('exit', 0);
+} finally {
+  childProcess.spawn = timingSpawn;
+  syncBuiltinESMExports();
+}
+
+// Accelerate only the synthetic poll clock; real interaction still uses 50 ms.
+const interval = globalThis.setInterval;
+const captureSnapshot = terminalManager.captureOutputSnapshot;
+const sendInput = terminalManager.sendInputToProcess;
+const getSince = terminalManager.getOutputSinceSnapshot;
+let syntheticPolls = 0;
+try {
+  globalThis.setInterval = (fn, _delay, ...args) => interval(fn, 1, ...args);
+  terminalManager.captureOutputSnapshot = () => ({});
+  terminalManager.sendInputToProcess = () => true;
+  terminalManager.getOutputSinceSnapshot = () => 'x'.repeat(++syntheticPolls);
+  const interacted = await callTool('interact_with_process', {
+    pid:2147483601, input:'synthetic', timeout_ms:6500, verbose_timing:true,
+  });
+  assert(interacted.isError !== true && interacted.content.some(item =>
+    item.text?.includes('HERMES_TIMING_EVENTS_TRUNCATED') && item.text.includes('128 recorded')),
+    'MCP_INTERACTION_TIMING_TRUNCATION_DISCLOSED');
+} finally {
+  globalThis.setInterval = interval;
+  terminalManager.captureOutputSnapshot = captureSnapshot;
+  terminalManager.sendInputToProcess = sendInput;
+  terminalManager.getOutputSinceSnapshot = getSince;
+}
+
+const absentTermination = await callTool('force_terminate', {pid:2147483647});
+const absentText = absentTermination.content.map(item => item.text || '').join('\n');
+assert(absentTermination.isError === true && absentText.includes('No active session or unable to initiate'),
+  'MCP_TERMINATE_MISSING_IS_ERROR');
+const fakePids = [2147483646, 2147483645, 2147483644, 2147483643, 2147483642, 2147483641];
+if (fakePids.some(pid => terminalManager.sessions.has(pid))) throw Error('SYNTHETIC_PID_OCCUPIED');
+const oldSignals = [], replacementSignals = [], sameSignals = [], rejectedSignals = [];
+const oldSession = {process:{kill:signal => {oldSignals.push(signal); return true;}}};
+const replacementSession = {process:{kill:signal => {replacementSignals.push(signal); return true;}}};
+const sameSession = {process:{kill:signal => {sameSignals.push(signal); return true;}}};
+const failingSession = {process:{kill:signal => {if (signal === 'SIGKILL') throw Error('synthetic failure'); return true;}}};
+const refusedSession = {process:{kill:() => {throw Error('synthetic refusal');}}};
+const rejectedSession = {process:{kill:signal => {rejectedSignals.push(signal); return false;}}};
+const rejectedEscalationSession = {process:{kill:signal => signal !== 'SIGKILL'}};
+const originalConsoleError = console.error;
+let escalationLogs = 0;
+try {
+  console.error = (...args) => {
+    if (args[0] === 'HERMES_TERMINATION_ESCALATION_FAILED') escalationLogs++;
+    else originalConsoleError(...args);
+  };
+  terminalManager.sessions.set(fakePids[0], oldSession);
+  const initiated = await callTool('force_terminate', {pid:fakePids[0]});
+  terminalManager.sessions.set(fakePids[0], replacementSession);
+  terminalManager.sessions.set(fakePids[1], sameSession);
+  const sameInitiated = await callTool('force_terminate', {pid:fakePids[1]});
+  terminalManager.sessions.set(fakePids[2], failingSession);
+  const failingInitiated = await callTool('force_terminate', {pid:fakePids[2]});
+  terminalManager.sessions.set(fakePids[3], refusedSession);
+  const refused = await callTool('force_terminate', {pid:fakePids[3]});
+  terminalManager.sessions.set(fakePids[4], rejectedSession);
+  const rejected = await callTool('force_terminate', {pid:fakePids[4]});
+  terminalManager.sessions.set(fakePids[5], rejectedEscalationSession);
+  const rejectedEscalation = await callTool('force_terminate', {pid:fakePids[5]});
+  await pause(1200);
+  assert(initiated.isError !== true && oldSignals.join(',') === 'SIGINT' && replacementSignals.length === 0,
+    'MCP_TERMINATE_REPLACEMENT_SESSION_UNTOUCHED');
+  assert(initiated.content.some(item => item.text?.includes('descendants may remain')),
+    'MCP_TERMINATE_SCOPE_DISCLOSED');
+  assert(sameInitiated.isError !== true && sameSignals.join(',') === 'SIGINT,SIGKILL',
+    'MCP_TERMINATE_SAME_SESSION_ESCALATES');
+  assert(failingInitiated.isError !== true && rejectedEscalation.isError !== true && escalationLogs === 2,
+    'MCP_TERMINATE_ESCALATION_ERRORS_CONTAINED');
+  assert(refused.isError === true, 'MCP_TERMINATE_REFUSAL_IS_ERROR');
+  assert(rejected.isError === true && rejectedSignals.join(',') === 'SIGINT',
+    'MCP_TERMINATE_FALSE_SIGNAL_IS_ERROR');
+} finally {
+  console.error = originalConsoleError;
+  for (const pid of fakePids) terminalManager.sessions.delete(pid);
+}
+
+// Drive the real compiled search manager with a controlled, real child process.
+// Timing/output are synthetic; SIGTERM, result retention and MCP flags are real.
+const originalSpawn = childProcess.spawn;
+const searchText = result => result.content.map(item => item.text || '').join('\n');
+async function finishSearch(started) {
+  const id = searchText(started).match(/session: (\S+)/)?.[1];
+  if (!id) throw Error('SEARCH_SESSION_ID_MISSING');
+  for (let i = 0; i < 100; i++) {
+    const result = await callTool('get_more_search_results', {sessionId:id,offset:0,length:10});
+    if (/Status: (COMPLETED|INCOMPLETE)|encountered an error:/.test(searchText(result))) {
+      await callTool('stop_search', {sessionId:id});
+      return result;
+    }
+    await pause(20);
+  }
+  throw Error('SEARCH_DID_NOT_FINISH');
+}
+const searchArgs = {path:'/workspace',pattern:'timeout-fixture',searchType:'content',
+  filePattern:'timeout-fixture.txt',literalSearch:true};
+try {
+  for (const partial of [false,true]) {
+    const match = {type:'match',data:{path:{text:'/workspace/timeout-fixture.txt'},
+      line_number:1,lines:{text:'partial-marker\n'}}};
+    const program = (partial ? `process.stdout.write(${JSON.stringify(JSON.stringify(match)+'\n')});` : '') +
+      'setInterval(()=>{},1000);';
+    childProcess.spawn = (_binary,_args,options) => originalSpawn(process.execPath,['-e',program],options);
+    syncBuiltinESMExports();
+    const started = await callTool('start_search', {...searchArgs,timeout_ms:partial?500:1});
+    if (!partial) assert(started.isError === true && searchText(started).includes('INCOMPLETE'),
+      'MCP_SEARCH_INITIAL_TIMEOUT_ERROR');
+    const result = await finishSearch(started);
+    assert(result.isError === true && !searchText(result).includes('✅ Search completed.'),
+      partial?'MCP_SEARCH_PARTIAL_TIMEOUT_ERROR':'MCP_SEARCH_EMPTY_TIMEOUT_ERROR');
+    if (partial) assert(searchText(result).includes('partial-marker') &&
+      searchText(result).includes('INCOMPLETE'), 'MCP_SEARCH_TIMEOUT_RETAINS_PARTIAL_RESULTS');
+  }
+} finally {
+  childProcess.spawn = originalSpawn;
+  syncBuiltinESMExports();
+}
+fs.mkdirSync('/workspace/search-complete');
+fs.writeFileSync('/workspace/search-complete/plain.txt','real-ripgrep-marker\n');
+for (const [pattern,expected] of [['real-ripgrep-marker','real-ripgrep-marker'],['absent-marker','No matches found.']]) {
+  const result = await finishSearch(await callTool('start_search', {...searchArgs,
+    path:'/workspace/search-complete',filePattern:'plain.txt',pattern,timeout_ms:5000}));
+  assert(result.isError !== true && searchText(result).includes(expected) &&
+    searchText(result).includes('✅ Search completed.'),
+    pattern==='absent-marker'?'MCP_SEARCH_TRUE_NO_MATCH_SUCCESS':'MCP_SEARCH_REAL_RIPGREP_SUCCESS');
+}
+
+const forbidden = await callTool('write_file', {
+  path: '/app/package.json', content: 'unapproved-tampering',
+  mode: 'rewrite',
+});
+assert(forbidden.isError === true, 'MCP_READONLY_SOURCE_WRITE_DENIED');
+const outside = await callTool('read_file', { path: '/host-private/owner-secret.txt' });
+assert(outside.isError === true, 'MCP_UNMOUNTED_SECRET_READ_DENIED');
+
+// Symlinks and lexical traversal must never grant access beyond the OS
+// sandbox: source is a separate read-only mount, host-private is unmounted.
+const hostLink = '/workspace/host-only-symlink';
+fs.symlinkSync('/host-private/owner-secret.txt', hostLink);
+const hostLinkRead = await callTool('read_file', {path: hostLink});
+assert(hostLinkRead.isError === true, 'MCP_UNMOUNTED_SYMLINK_SECRET_READ_DENIED');
+
+const readonlySource = '/app/package.json';
+const beforeSource = fs.readFileSync(readonlySource);
+const sourceLink = '/workspace/read-only-source-link';
+fs.symlinkSync(readonlySource, sourceLink);
+await callTool('write_file', {
+  path: sourceLink, content: 'attempted-symlink-source-tampering', mode: 'rewrite',
+});
+assert(fs.readFileSync(readonlySource).equals(beforeSource),
+  'OS_SYMLINK_SOURCE_CANNOT_BE_MODIFIED');
+
+const traversalWrite = await callTool('write_file', {
+  path: '/workspace/../app/package.json',
+  content: 'attempted-traversal-tampering', mode: 'rewrite',
+});
+assert(traversalWrite.isError === true &&
+       fs.readFileSync(readonlySource).equals(beforeSource),
+       'OS_TRAVERSAL_SOURCE_WRITE_DENIED');
+
+
+// Run the SAME general-purpose shell tool that would be dangerous if its OS
+// identity had production privileges. Even a Node subprocess must be isolated.
+const childProgram = String.raw`
+import fs from 'node:fs';
+import net from 'node:net';
+import { writeFileSync } from 'node:fs';
+const canWrite = (p) => {
+  try { fs.writeFileSync(p, 'tamper'); return true; }
+  catch { return false; }
+};
+const networkBlocked = await new Promise((resolve) => {
+  const sock = net.connect({ host: '1.1.1.1', port: 443 });
+  sock.once('connect', () => { sock.destroy(); resolve(false); });
+  sock.once('error', () => resolve(true));
+  sock.setTimeout(1500, () => { sock.destroy(); resolve(false); });
+});
+const report = {
+  workspaceWritable: canWrite('/workspace/subprocess-ok.txt'),
+  mountedSourceReadOnly: !canWrite('/app/package.json'),
+  ownerHostSecretUnreachable: !fs.existsSync('/host-private/owner-secret.txt'),
+  rootHomeUnreadable: (() => { try { fs.readdirSync('/root'); return false; } catch { return true; } })(),
+  egressBlocked: networkBlocked
+};
+writeFileSync('/workspace/child-result.json', JSON.stringify(report));
+`;
+fs.writeFileSync('/workspace/child-worker.mjs', childProgram);
+const started = await callTool('start_process', {
+  command: 'node /workspace/child-worker.mjs',
+  shell: '/bin/sh',
+  timeout_ms: 10000,
+});
+assert(started.isError !== true, 'MCP_REAL_TERMINAL_DISPATCH');
+let child = null;
+for (let i = 0; i < 40; i++) {
+  if (fs.existsSync('/workspace/child-result.json')) {
+    child = JSON.parse(fs.readFileSync('/workspace/child-result.json', 'utf8'));
+    break;
+  }
+  await pause(250);
+}
+assert(child !== null, 'MCP_CHILD_PROCESS_FINISHED');
+if (child) for (const [k, value] of Object.entries(child)) {
+  assert(value === true, 'OS_SHELL_' + k.toUpperCase());
+}
+if (failures.length) {
+  console.error('OS_SANDBOX_NEGATIVE_FAILED=' + failures.join(','));
+  process.exitCode = 1;
+} else console.log('HERMES_BRC_LINUX_OS_SANDBOX_E2E=PASS');
+// The resident search manager keeps a maintenance interval alive.
+await new Promise(resolve => process.stdout.write('', resolve));
+process.exit(failures.length ? 1 : 0);

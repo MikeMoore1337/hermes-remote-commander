@@ -1,4 +1,4 @@
-import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS } from '../terminal-manager.js';
+import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, MAX_HERMES_TIMING_EVENTS } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
@@ -221,8 +221,11 @@ function formatTimingInfo(timing: any): string {
     msg += `  Output Window: ${timing.lastOutputTime - timing.firstOutputTime}ms\n`;
   }
 
+  if (timing.outputEventsTruncated) {
+    msg += `\n  HERMES_TIMING_EVENTS_TRUNCATED: first ${MAX_HERMES_TIMING_EVENTS} events recorded.\n`;
+  }
   if (timing.outputEvents && timing.outputEvents.length > 0) {
-    msg += `\n  Output Events (${timing.outputEvents.length} total):\n`;
+    msg += `\n  Output Events (${timing.outputEvents.length} recorded):\n`;
     timing.outputEvents.forEach((event: any, idx: number) => {
       msg += `    [${idx + 1}] +${event.deltaMs}ms | ${event.source} | ${event.length}b`;
       if (event.matchedPattern) {
@@ -428,6 +431,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
   let firstOutputTime: number | undefined;
   let lastOutputTime: number | undefined;
   const outputEvents: any[] = [];
+  let outputEventsTruncated = false;
   let exitReason: 'early_exit_quick_pattern' | 'early_exit_periodic_check' | 'process_finished' | 'timeout' | 'no_wait' = 'timeout';
 
   try {
@@ -514,7 +518,8 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
             lastOutputTime = now;
 
             if (verbose_timing) {
-              outputEvents.push({
+              if (outputEvents.length >= MAX_HERMES_TIMING_EVENTS) { outputEventsTruncated = true; }
+              else outputEvents.push({
                 timestamp: now,
                 deltaMs: now - startTime,
                 source: 'periodic_poll',
@@ -534,7 +539,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
               earlyExit = true;
               exitReason = 'early_exit_periodic_check';
 
-              if (verbose_timing && outputEvents.length > 0) {
+              if (verbose_timing && !outputEventsTruncated && outputEvents.length > 0) {
                 outputEvents[outputEvents.length - 1].matchedPattern = 'periodic_check';
               }
 
@@ -601,7 +606,8 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
         firstOutputTime,
         lastOutputTime,
         timeToFirstOutputMs: firstOutputTime ? firstOutputTime - startTime : undefined,
-        outputEvents: outputEvents.length > 0 ? outputEvents : undefined
+        outputEvents: outputEvents.length > 0 ? outputEvents : undefined,
+        outputEventsTruncated
       };
       timingMessage = formatTimingInfo(timingInfo);
     }
@@ -682,11 +688,12 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
 
   const success = terminalManager.forceTerminate(pid);
   return {
+    isError: !success,
     content: [{
       type: "text",
       text: success
-        ? `Successfully initiated termination of session ${pid}`
-        : `No active session found for PID ${pid}`
+        ? `Successfully initiated termination of session ${pid}. Only the tracked process is signaled; descendants may remain.`
+        : `No active session or unable to initiate termination for PID ${pid}`
     }],
   };
 }

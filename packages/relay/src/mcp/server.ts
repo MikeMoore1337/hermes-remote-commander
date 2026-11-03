@@ -8,6 +8,8 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import type { DeviceHub } from '../device-hub.js';
 import type { SqliteStore } from '../store/sqlite.js';
 import { invokeTool, listUserDevices, type InvokeContext } from './invoke.js';
+import { isPermittedRemoteTool } from './hermes-policy.js';
+import { pinnedToolCatalog } from './hermes-tool-catalog.js';
 
 export type McpContext = InvokeContext;
 
@@ -34,7 +36,7 @@ export const LIST_DEVICES_TOOL = {
 export function liveTools(hub: DeviceHub, store: SqliteStore, userId: string) {
   const online = hub.list(userId).filter((d) => !store.getDevice(d.deviceId)?.paused);
   const merged = new Map<string, { name: string; description: string; inputSchema: unknown; annotations?: Record<string, unknown> }>();
-  for (const d of online) for (const t of hub.get(d.deviceId)?.tools ?? []) if (!merged.has(t.name)) merged.set(t.name, { ...t, inputSchema: withDeviceId(t.inputSchema) });
+  for (const d of online) for (const t of hub.get(d.deviceId)?.tools ?? []) if (isPermittedRemoteTool(t.name, {}) && !merged.has(t.name)) merged.set(t.name, { ...t, inputSchema: withDeviceId(t.inputSchema) });
   return { online: online.length, tools: [...merged.values()] };
 }
 
@@ -42,8 +44,9 @@ export function createMcpServer(hub: DeviceHub, store: SqliteStore, ctx: McpCont
   const server = new Server({ name: 'brc', version: relayVersion }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const { online, tools } = liveTools(hub, store, ctx.userId);
-    return { tools: [{ ...LIST_DEVICES_TOOL, description: `${LIST_DEVICES_TOOL.description} ${online} device(s) currently online.` }, ...tools] };
+    const { online } = liveTools(hub, store, ctx.userId);
+    return { tools: [{ ...LIST_DEVICES_TOOL, description: `${LIST_DEVICES_TOOL.description} ${online} device(s) currently online.` },
+      ...pinnedToolCatalog().map(t => ({ ...t, inputSchema: withDeviceId(t.inputSchema) }))] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {

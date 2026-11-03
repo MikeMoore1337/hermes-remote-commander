@@ -957,6 +957,11 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         fileType: fileInfo.fileType ?? fallbackInfo.fileType,
     };
 
+    if (info.created instanceof Date && info.created.getTime() === 0) {
+        info.created = null;
+        info.createdStatus = 'unavailable_or_epoch';
+    }
+
     // Add type-specific metadata from file handler
     if (fileInfo.metadata) {
         // For text files

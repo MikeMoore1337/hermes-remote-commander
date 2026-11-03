@@ -57,6 +57,21 @@ export function loadConfig(): RelayConfig {
 const DEVICE_CODE_TTL_MS = 15 * 60_000;
 const DEVICE_POLL_INTERVAL_S = 5;
 
+function withinMcpElementLimit(body: unknown): boolean {
+  const pending = [body];
+  let count = 0;
+  while (pending.length) {
+    const value = pending.pop();
+    if (value === null || typeof value !== 'object') continue;
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      if (++count > 10_000) return false;
+      pending.push((value as Record<string, unknown>)[key]);
+    }
+  }
+  return true;
+}
+
 export interface Relay { http: HttpServer; hub: DeviceHub; store: SqliteStore; close(): Promise<void> }
 
 export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) => void): Relay {
@@ -70,6 +85,23 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
   app.set('trust proxy', cfg.trustProxy);
   app.disable('x-powered-by');
   app.use(cookieParser());
+  // All owner-authorized browser mutations require an exact same-origin
+  // Origin value. SameSite=Lax by itself is NOT our CSRF boundary.
+  const ownerMutationPaths = new Set([
+    '/auth/consent', '/device/verify', '/device/approve',
+    '/auth/clients/delete', '/admin/device',
+    '/auth/apikeys', '/auth/apikeys/revoke',
+  ]);
+  const ownerOrigin = new URL(cfg.publicUrl).origin;
+  app.use((req, res, next) => {
+    if (req.method !== 'POST' || !ownerMutationPaths.has(req.path)) return next();
+    const origin = req.headers.origin;
+    const fetchSite = req.headers['sec-fetch-site'];
+    if (origin !== ownerOrigin || (fetchSite && fetchSite !== 'same-origin')) {
+      return res.status(403).type('text/plain').send('HERMES_BROWSER_ORIGIN_DENIED');
+    }
+    next();
+  });
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -198,7 +230,14 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     if (row.denied) { store.deleteDeviceCode(row.device_code); return res.status(400).json({ error: 'access_denied' }); }
     if (!row.approved || !row.user_id) return res.status(400).json({ error: 'authorization_pending', interval: DEVICE_POLL_INTERVAL_S });
     const deviceId = device_id || row.device_id || `dev_${row.user_code.replace('-', '').toLowerCase()}`;
+    const previousGrant = store.getDevice(deviceId);
+    // Pairing may rotate a device for its owner, never steal another owner's ID.
+    if (previousGrant && previousGrant.user_id !== row.user_id) {
+      return res.status(409).json({ error: 'device_id_conflict' });
+    }
     const token = store.issueDeviceToken(deviceId, row.user_id, name || row.client_name, platform ?? null);
+    // Retire the previous connection after rotating its credential.
+    hub.get(deviceId)?.socket.close(4401, 'device credential rotated');
     store.deleteDeviceCode(row.device_code);
     log('info', `device paired: ${name || row.client_name} [${deviceId}] for user ${row.user_id}`);
     res.json({ device_token: token, device_id: deviceId, token_type: 'bearer', ws_url: cfg.publicUrl.replace(/^http/, 'ws') + '/ws' });
@@ -241,6 +280,9 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     const auth = (req as Request & { auth?: AuthInfo }).auth!;
     const userId = String(auth.extra?.userId ?? '');
     if (!userId) return res.status(401).json({ error: 'invalid_token' });
+    if (!withinMcpElementLimit(req.body)) {
+      return res.status(413).json({ jsonrpc: '2.0', error: { code: -32600, message: 'MCP request has too many elements' }, id: null });
+    }
     const server = createMcpServer(hub, store, { userId, clientId: auth.clientId }, cfg.relayVersion);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { void transport.close(); void server.close(); });
@@ -298,11 +340,21 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
   http.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', cfg.publicUrl);
     if (url.pathname !== '/ws') return socket.destroy();
+    // Reject URI device tokens even when a valid Authorization header is
+    // supplied. URI query params can be stored in reverse-proxy/access logs.
+    if (url.searchParams.has('token')) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return socket.destroy();
+    }
     const h = req.headers.authorization;
-    const token = h?.startsWith('Bearer ') ? h.slice(7).trim() : url.searchParams.get('token');
+    const token = h?.startsWith('Bearer ') ? h.slice(7).trim() : undefined;
     const dev = token ? store.getDeviceByToken(token) : undefined;
     if (!dev) { log('warn', `agent auth failed from ${req.socket.remoteAddress}`); socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); return socket.destroy(); }
     wss.handleUpgrade(req, socket, head, (ws) => {
+      // A private, immutable hash binding, never the bearer itself.
+      Object.defineProperty(ws, 'hermesAuthTokenHash', {
+        value: dev.token_hash, writable: false, configurable: false, enumerable: false,
+      });
       hub.attach(ws, dev.user_id, dev.device_id);
       store.touchDevice(dev.device_id);
     });

@@ -3,7 +3,6 @@
  * Returns MCP-shaped results; errors become { isError: true } text blocks (never throws).
  */
 import * as handlers from './core/handlers/index.js';
-import { getConfig, setConfigValue } from './core/tools/config.js';
 import { getUsageStats } from './core/tools/usage.js';
 import { buildToolDefinitions, EXCLUDED_TOOLS, type ToolDefinition } from './core/tool-definitions.js';
 import { usageTracker } from './core/utils/usageTracker.js';
@@ -13,10 +12,7 @@ type Args = Record<string, unknown>;
 type Handler = (args: Args) => Promise<unknown>;
 
 const TOOL_HANDLERS: Record<string, Handler> = {
-  get_config: () => getConfig(),
-  set_config_value: (a) => setConfigValue(a),
   get_usage_stats: () => getUsageStats(),
-  get_recent_tool_calls: (a) => handlers.handleGetRecentToolCalls(a),
   start_process: (a) => handlers.handleStartProcess(a),
   read_process_output: (a) => handlers.handleReadProcessOutput(a),
   interact_with_process: (a) => handlers.handleInteractWithProcess(a),
@@ -24,16 +20,15 @@ const TOOL_HANDLERS: Record<string, Handler> = {
   list_sessions: () => handlers.handleListSessions(),
   list_processes: () => handlers.handleListProcesses(),
   kill_process: (a) => handlers.handleKillProcess(a),
-  read_file: (a) => handlers.handleReadFile(a),
+  read_file: (a) => a.isUrl === true
+    ? Promise.resolve({ isError: true, content: [{ type: 'text', text: 'HERMES_REMOTE_URL_FETCH_DENIED' }] })
+    : handlers.handleReadFile(a),
   read_multiple_files: (a) => handlers.handleReadMultipleFiles(a),
   write_file: (a) => handlers.handleWriteFile(a),
   write_pdf: (a) => handlers.handleWritePdf(a),
   create_directory: (a) => handlers.handleCreateDirectory(a),
   list_directory: (a) => handlers.handleListDirectory(a),
   move_file: (a) => handlers.handleMoveFile(a),
-  prepare_file_transfer: (a) => handlers.handlePrepareFileTransfer(a),
-  send_file_transfer: (a) => handlers.handleSendFileTransfer(a),
-  receive_file_transfer: (a) => handlers.handleReceiveFileTransfer(a),
   get_file_info: (a) => handlers.handleGetFileInfo(a),
   edit_block: (a) => handlers.handleEditBlock(a),
   start_search: (a) => handlers.handleStartSearch(a),
@@ -42,6 +37,8 @@ const TOOL_HANDLERS: Record<string, Handler> = {
   list_searches: () => handlers.handleListSearches(),
 };
 
+const h454FileMutations = new Set(['write_file', 'write_pdf', 'create_directory', 'move_file', 'edit_block']);
+let h454FileMutationBusy = false;
 let cachedDefs: ToolDefinition[] | null = null;
 
 export function listTools(): ToolDefinition[] {
@@ -60,6 +57,12 @@ export async function callTool(name: string, args: Args): Promise<ToolResult> {
   if (!handler) {
     return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
   }
+  const h454Mutation = h454FileMutations.has(name);
+  if (h454Mutation && h454FileMutationBusy) {
+    void usageTracker.trackFailure(name);
+    return { content: [{ type: 'text', text: 'HERMES_FILE_MUTATION_BUSY: another file mutation is in progress; retry after it completes.' }], isError: true };
+  }
+  if (h454Mutation) h454FileMutationBusy = true;
   try {
     const result = (await handler(args ?? {})) as ToolResult;
     if (!result.isError) void usageTracker.trackSuccess(name);
@@ -69,5 +72,7 @@ export async function callTool(name: string, args: Args): Promise<ToolResult> {
     void usageTracker.trackFailure(name);
     const message = err instanceof Error ? err.message : String(err);
     return { content: [{ type: 'text', text: `Error in ${name}: ${message}` }], isError: true };
+  } finally {
+    if (h454Mutation) h454FileMutationBusy = false;
   }
 }
