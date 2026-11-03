@@ -37,8 +37,9 @@ on POSIX it must be owned by root or the relay user and not group/world writable
 The agent must not be able to modify this file or its parent directories. Windows
 ACLs and parent-directory protection are not verified by these checks. A registry
 entry and a path name do not enforce an OS sandbox or prove that production data
-is absent; device-specific OS isolation and owner approval remain required. The
-file is not editable through MCP, and changing it requires a controlled restart.
+is absent; device-specific OS isolation and owner approval remain required. No
+dedicated registry mutation tool is exposed; shell access must be blocked by OS
+permissions. Changes take effect only after a controlled restart.
 
 The authenticated `/mcp` route rejects JSON requests with more than 10,000
 array elements and object properties before SDK validation; the existing 32 MiB
