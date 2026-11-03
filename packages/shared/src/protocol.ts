@@ -3,6 +3,22 @@
  * Agent connects outbound to `wss://<relay>/ws` with `Authorization: Bearer <device token>`.
  */
 export const BRC_PROTOCOL_VERSION = 1;
+export const MAX_JSON_ELEMENTS = 10_000;
+
+export function withinJsonElementLimit(body: unknown): boolean {
+  const pending = [body];
+  let count = 0;
+  while (pending.length) {
+    const value = pending.pop();
+    if (value === null || typeof value !== 'object') continue;
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      if (++count > MAX_JSON_ELEMENTS) return false;
+      pending.push((value as Record<string, unknown>)[key]);
+    }
+  }
+  return true;
+}
 
 export interface ToolDefinition {
   name: string;

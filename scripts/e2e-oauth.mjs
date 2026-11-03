@@ -13,6 +13,12 @@ step('discovery', !!meta.authorization_endpoint && !!prm.resource, `auth=${meta.
 
 // 2. dynamic client registration
 const redirect = 'https://claude.ai/api/mcp/auth_callback';
+const hugeRegistration = await fetch(meta.registration_endpoint, { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ client_name: 'synthetic', redirect_uris: Array(10001).fill(null) }) });
+step('oversized registration collection refused', hugeRegistration.status === 413, `status=${hugeRegistration.status}`);
+const hugeRegistrationBody = await fetch(meta.registration_endpoint, { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ client_name: 'x'.repeat(65537), redirect_uris: [redirect] }) });
+step('oversized registration body refused', hugeRegistrationBody.status === 413, `status=${hugeRegistrationBody.status}`);
 const reg = await j(await fetch(meta.registration_endpoint, { method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ client_name: 'Claude', redirect_uris: [redirect], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' }) }));
 step('register', !!reg.client_id, `client_id=${reg.client_id}`);

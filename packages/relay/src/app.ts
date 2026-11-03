@@ -26,6 +26,7 @@ import { loadWorkspaceRegistry } from './mcp/hermes-workspaces.js';
 import * as pages from './pages/html.js';
 import * as adminPages from './pages/admin.js';
 import { LoginLimiter } from './auth/rate-limit.js';
+import { withinJsonElementLimit } from 'brc-shared';
 
 export interface RelayConfig {
   port: number;
@@ -59,21 +60,6 @@ export function loadConfig(): RelayConfig {
 
 const DEVICE_CODE_TTL_MS = 15 * 60_000;
 const DEVICE_POLL_INTERVAL_S = 5;
-
-function withinMcpElementLimit(body: unknown): boolean {
-  const pending = [body];
-  let count = 0;
-  while (pending.length) {
-    const value = pending.pop();
-    if (value === null || typeof value !== 'object') continue;
-    for (const key in value) {
-      if (!Object.hasOwn(value, key)) continue;
-      if (++count > 10_000) return false;
-      pending.push((value as Record<string, unknown>)[key]);
-    }
-  }
-  return true;
-}
 
 export interface Relay { http: HttpServer; hub: DeviceHub; store: SqliteStore; close(): Promise<void> }
 
@@ -151,6 +137,12 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
   app.get('/.well-known/oauth-authorization-server', (_req, res) => res.json(oauthMetadata));
   app.get('/.well-known/oauth-protected-resource', (_req, res) => res.json(protectedResourceMetadata));
   app.get('/.well-known/oauth-protected-resource/mcp', (_req, res) => res.json(protectedResourceMetadata));
+
+  // Bound unauthenticated registration collections before SDK schema validation.
+  app.post('/register', express.json({ limit: '64kb' }), (req, res, next) => {
+    if (!withinJsonElementLimit(req.body)) return res.status(413).json({ error: 'invalid_client_metadata' });
+    next();
+  });
 
   app.use(mcpAuthRouter({
     provider,
@@ -284,7 +276,7 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     const auth = (req as Request & { auth?: AuthInfo }).auth!;
     const userId = String(auth.extra?.userId ?? '');
     if (!userId) return res.status(401).json({ error: 'invalid_token' });
-    if (!withinMcpElementLimit(req.body)) {
+    if (!withinJsonElementLimit(req.body)) {
       return res.status(413).json({ jsonrpc: '2.0', error: { code: -32600, message: 'MCP request has too many elements' }, id: null });
     }
     const server = createMcpServer(hub, store, { userId, clientId: auth.clientId }, cfg.relayVersion, workspaces);
