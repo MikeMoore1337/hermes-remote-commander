@@ -62,6 +62,9 @@ jobs:
         run: |
           docker run --rm --network none --entrypoint node brc/agent:ci -e "const f=require('node:fs'); for(const p of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','licenses/GPL-3.0.txt','licenses/LGPL-3.0.txt']) if(!f.existsSync(p)) process.exit(1)"
           docker run --rm --network none --entrypoint node brc/relay:ci -e "const f=require('node:fs'),p=require('node:path'); const a=p.dirname(p.dirname(require.resolve('brc-agent'))); for(const x of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','licenses/GPL-3.0.txt','licenses/LGPL-3.0.txt']) if(!f.existsSync(p.join(a,x))) process.exit(1); for(const x of ['LICENSE','NOTICE']) if(!f.existsSync(x)) process.exit(1)"
+          for image in brc/agent:ci brc/relay:ci; do
+            docker run --rm --network none --entrypoint node "$image" --input-type=module -e "import {fileURLToPath} from 'node:url'; import {dirname,join} from 'node:path'; import {readFileSync} from 'node:fs'; const root=dirname(dirname(fileURLToPath(import.meta.resolve('brc-shared')))); for(const f of ['LICENSE','NOTICE']) if(!readFileSync(join(root,f)).equals(readFileSync(f))) process.exit(1)"
+          done
       - name: Verify standalone relay includes the pinned agent schemas
         run: |
           docker run --rm --network none --entrypoint node brc/relay:ci --input-type=module -e "import('./dist/mcp/hermes-tool-catalog.js').then(({pinnedToolCatalog}) => { if (!pinnedToolCatalog().some(t => t.name === 'read_file')) process.exit(1); })"
