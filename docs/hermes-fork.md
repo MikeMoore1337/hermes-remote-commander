@@ -46,6 +46,8 @@ The two-agent test demonstrates a client checking the resolved top-level, Git
 origin and branch before proceeding, including negative cases for a missing
 repository and mismatched origin or branch. The relay does not enforce that
 check on writes; clients and the OS sandbox remain responsible for the boundary.
+An explicitly supplied empty or non-string `deviceId` is refused; only an omitted
+ID can use the existing single-device default.
 
 The registry file must be a regular file, at most 16 KiB, without hard links;
 on POSIX it must be owned by root or the relay user and not group/world writable.

@@ -76,6 +76,10 @@ const devs = await rpc('tools/call', { name: 'list_devices', arguments: {} }, 3)
 const devJson = JSON.parse(devs.body?.result?.content?.[0]?.text ?? '{}');
 step('mcp list_devices', devJson.devices?.some((d) => d.online), JSON.stringify(devJson.devices?.map((d) => `${d.name}:${d.online ? 'online' : 'offline'}`)));
 
+const invalidDevice = await rpc('tools/call', { name: 'start_process', arguments: { deviceId: null, command: 'echo wrong-device' } }, 21);
+step('mcp refuses invalid explicit device ID', invalidDevice.body?.result?.isError === true &&
+  invalidDevice.body?.result?.content?.[0]?.text === 'HERMES_INVALID_DEVICE_ID');
+
 const call = await rpc('tools/call', { name: 'start_process', arguments: { command: 'echo brc-mcp-ok', timeout_ms: 8000 } }, 4);
 const out = call.body?.result?.content?.[0]?.text ?? '';
 step('mcp start_process via device', out.includes('brc-mcp-ok'), `isError=${call.body?.result?.isError} device=${call.body?.result?._meta?.deviceName}`);

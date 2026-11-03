@@ -39,6 +39,9 @@ export async function invokeTool(
   if (!isPermittedRemoteTool(tool, args)) {
     return { ok: false, status: 403, message: 'HERMES_REMOTE_TOOL_DENIED' };
   }
+  if (Object.hasOwn(args, 'deviceId') && (typeof args.deviceId !== 'string' || !args.deviceId)) {
+    return { ok: false, status: 400, message: 'HERMES_INVALID_DEVICE_ID' };
+  }
   const requested = typeof args.deviceId === 'string' && args.deviceId ? args.deviceId : undefined;
   delete args.deviceId;
   const deviceId = requested ?? hub.resolveDefault(ctx.userId);
