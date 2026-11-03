@@ -81,10 +81,22 @@ export async function killProcess(args: unknown): Promise<ServerResult> {
     };
   }
 
-  try {
-    process.kill(parsed.data.pid);
+  if (parsed.data.pid === process.pid) {
     return {
-      content: [{ type: "text", text: `Successfully terminated process ${parsed.data.pid}` }],
+      content: [{ type: "text", text: "Error: Refusing to terminate the agent process" }],
+      isError: true,
+    };
+  }
+
+  try {
+    if (!process.kill(parsed.data.pid)) {
+      return {
+        content: [{ type: "text", text: `Error: Failed to signal process ${parsed.data.pid}` }],
+        isError: true,
+      };
+    }
+    return {
+      content: [{ type: "text", text: `Termination signal sent to process ${parsed.data.pid}; exit is not verified` }],
     };
   } catch (error) {
     return {

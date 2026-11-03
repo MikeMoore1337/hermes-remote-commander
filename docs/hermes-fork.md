@@ -16,6 +16,12 @@ Hermes changes were reviewed against its source at [`f2b6bafad4dcb62059629151945
 | Recovery | Reconnect with backoff | Old/foreign replies rejected; pending calls fail on disconnect | Prove real reboot/reconnect; a completed side effect cannot be undone |
 | Security | Agent has its OS user's rights | Device-grant, CSRF and relay policy hardening | OS sandbox, per-device authorization and independent review |
 
+`kill_process` rejects process groups, PID 1 and the agent's own PID. Other
+positive PIDs remain subject to the agent's OS permissions; a successful result
+only confirms that a signal was sent, not that the process or descendants exited.
+Shell commands can still signal processes allowed by the OS, so use a dedicated
+identity and isolated process namespace.
+
 The existing Hermes schema-1 workspace registry, native Windows bridge, observer
 and Control Center remain in [the Hermes repository](https://github.com/MikeMoore1337/hermes).
 They are not yet integrated with this fork. Existing deployment and rollback
