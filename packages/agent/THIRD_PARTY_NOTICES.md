@@ -24,4 +24,6 @@ selects that alternative. Other dependencies retain the licenses they declare.
 Before distributing a binary or image containing LGPL libraries, verify the
 exact platform artifacts, complete corresponding sources, notices and the
 applicable relinking or shared-library conditions. This notice does not certify
-that a particular binary distribution satisfies those obligations.
+that a particular binary distribution satisfies those obligations. The fork
+repository link alone does not identify the corresponding source for a binary;
+each release must identify and retain its exact source and build inputs.
