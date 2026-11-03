@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
 test('MCP XLSX read/write/edit and the ExcelJS streaming reader remain usable', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'brc-xlsx-'));
+  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'brc-xlsx-')));
   process.env.BRC_HOME = path.join(dir, 'home');
   process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
   const { callTool } = await import('../packages/agent/dist/dispatcher.js');
