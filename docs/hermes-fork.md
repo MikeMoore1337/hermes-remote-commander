@@ -21,6 +21,8 @@ positive PIDs remain subject to the agent's OS permissions; a successful result
 only confirms that a signal was sent, not that the process or descendants exited.
 Shell commands can still signal processes allowed by the OS, so use a dedicated
 identity and isolated process namespace.
+When upstream telemetry is disabled, the agent's `capture` path returns before
+creating a telemetry identifier or reading telemetry configuration.
 
 The existing Hermes schema-1 workspace registry, native Windows bridge, observer
 and Control Center remain in [the Hermes repository](https://github.com/MikeMoore1337/hermes).
