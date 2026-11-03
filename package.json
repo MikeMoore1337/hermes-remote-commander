@@ -21,7 +21,7 @@
                     "publish:all":  "pnpm -r --filter \"./packages/*\" publish --access public",
                     "test:unit":  "node --test packages/relay/test/unit.test.mjs",
                     "test:e2e":  "node scripts/e2e-all.mjs",
-                    "test:hermes":  "node --test scripts/e2e-suite.test.mjs scripts/hermes-workspaces.test.mjs scripts/hermes-process.test.mjs scripts/hermes-terminal-close.test.mjs scripts/hermes-telemetry.test.mjs scripts/hermes-excel.test.mjs scripts/hermes-browser-policy.test.mjs scripts/hermes-zod-contract.test.mjs && node scripts/hermes-agent-policy.mjs && node scripts/h15_brc_relay_ws_e2e.mjs && node scripts/h15_brc_two_wss_agents_e2e.mjs && node scripts/h15_brc_gateway_policy_e2e.mjs && node scripts/h15_brc_reconnect_socket_e2e.mjs && node scripts/h15_brc_browser_csrf_e2e.mjs && node scripts/hermes-revocation-e2e.mjs packages/agent",
+                    "test:hermes":  "node --test scripts/e2e-suite.test.mjs scripts/hermes-workspaces.test.mjs scripts/hermes-process.test.mjs scripts/hermes-terminal-close.test.mjs scripts/hermes-telemetry.test.mjs scripts/hermes-excel.test.mjs scripts/hermes-browser-policy.test.mjs scripts/hermes-zod-contract.test.mjs scripts/hermes-observer.test.mjs && node scripts/hermes-agent-policy.mjs && node scripts/h15_brc_relay_ws_e2e.mjs && node scripts/h15_brc_two_wss_agents_e2e.mjs && node scripts/h15_brc_gateway_policy_e2e.mjs && node scripts/h15_brc_reconnect_socket_e2e.mjs && node scripts/h15_brc_browser_csrf_e2e.mjs && node scripts/hermes-revocation-e2e.mjs packages/agent",
                     "test":  "pnpm test:unit \u0026\u0026 pnpm test:e2e"
                 },
     "devDependencies":  {
