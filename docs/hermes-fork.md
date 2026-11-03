@@ -95,6 +95,12 @@ includes third-party notices. Review redistribution terms, source availability
 and exact shipped platform artifacts before publishing packages or images; the
 upstream MIT notice does not cover all dependencies.
 
+The workspace's pnpm overrides do not automatically constrain transitive
+dependencies when an npm consumer installs an individual published package.
+Before any npm publication, test a clean consumer install for resolved
+dependencies, install-time downloads, license obligations and security. The
+current CI tarballs and local deploy-directory checks do not establish that.
+
 The upstream automatic publishing workflow has been removed from this branch:
 it could push directly to `main` and publish npm packages and container images.
 CI only builds and tests. A future release needs its own approved procedure.

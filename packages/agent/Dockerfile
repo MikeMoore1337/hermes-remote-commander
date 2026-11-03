@@ -10,6 +10,9 @@ COPY packages/agent/package.json packages/agent/tsconfig.json packages/agent/
 RUN pnpm install --frozen-lockfile --filter brc-agent... --config.confirmModulesPurge=false
 COPY packages/shared/src packages/shared/src
 COPY packages/agent/src packages/agent/src
+COPY packages/shared/LICENSE packages/shared/NOTICE packages/shared/
+COPY packages/agent/LICENSE packages/agent/NOTICE packages/agent/THIRD_PARTY_NOTICES.md packages/agent/
+COPY packages/agent/licenses packages/agent/licenses
 RUN pnpm --filter brc-shared build && pnpm --filter brc-agent build
 RUN pnpm --filter brc-agent --prod deploy --legacy /out
 

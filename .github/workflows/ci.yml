@@ -42,6 +42,9 @@ jobs:
       - name: pack npm tarballs
         if: matrix.os == 'ubuntu-latest'
         run: pnpm pack:all
+      - name: Verify notices in npm tarballs
+        if: matrix.os == 'ubuntu-latest'
+        run: node scripts/check-package-notices.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: matrix.os == 'ubuntu-latest'
         with: { name: npm-tarballs, path: dist-pack/*.tgz }
@@ -55,6 +58,10 @@ jobs:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - run: docker build -f packages/relay/Dockerfile -t brc/relay:ci .
       - run: docker build -f packages/agent/Dockerfile -t brc/agent:ci .
+      - name: Verify notices in both images
+        run: |
+          docker run --rm --network none --entrypoint node brc/agent:ci -e "const f=require('node:fs'); for(const p of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','licenses/GPL-3.0.txt','licenses/LGPL-3.0.txt']) if(!f.existsSync(p)) process.exit(1)"
+          docker run --rm --network none --entrypoint node brc/relay:ci -e "const f=require('node:fs'),p=require('node:path'); const a=p.dirname(p.dirname(require.resolve('brc-agent'))); for(const x of ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','licenses/GPL-3.0.txt','licenses/LGPL-3.0.txt']) if(!f.existsSync(p.join(a,x))) process.exit(1); for(const x of ['LICENSE','NOTICE']) if(!f.existsSync(x)) process.exit(1)"
       - name: Verify standalone relay includes the pinned agent schemas
         run: |
           docker run --rm --network none --entrypoint node brc/relay:ci --input-type=module -e "import('./dist/mcp/hermes-tool-catalog.js').then(({pinnedToolCatalog}) => { if (!pinnedToolCatalog().some(t => t.name === 'read_file')) process.exit(1); })"

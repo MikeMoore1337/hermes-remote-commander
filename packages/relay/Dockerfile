@@ -10,6 +10,10 @@ RUN pnpm install --frozen-lockfile --filter brc-relay... --config.confirmModules
 COPY packages/shared/src packages/shared/src
 COPY packages/agent/src packages/agent/src
 COPY packages/relay/src packages/relay/src
+COPY packages/shared/LICENSE packages/shared/NOTICE packages/shared/
+COPY packages/agent/LICENSE packages/agent/NOTICE packages/agent/THIRD_PARTY_NOTICES.md packages/agent/
+COPY packages/agent/licenses packages/agent/licenses
+COPY packages/relay/LICENSE packages/relay/NOTICE packages/relay/
 RUN pnpm --filter brc-shared build && pnpm --filter brc-agent build && pnpm --filter brc-relay build
 RUN pnpm --filter brc-relay --prod deploy --legacy /out
 

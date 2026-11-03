@@ -11,6 +11,8 @@ npm i -g brc-agent
 ```
 Requires Node.js 22.13+ (Windows, macOS, Linux).
 
+See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for attribution and third-party license information.
+
 ## Pair with your relay
 
 ```bash
