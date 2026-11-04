@@ -78,6 +78,25 @@ jobs:
       - name: Inventory exact OCI OS and native dependencies (no publication)
         shell: bash
         run: bash scripts/h15_image_inventory.sh brc/agent:ci brc/relay:ci "$RUNNER_TEMP/h15-image-inventory"
+      - name: Verify native sharp PNG rendering in isolated agent image
+        shell: bash
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node brc/agent:ci -e '
+              const sharp = require("sharp");
+              sharp({ create: { width: 2, height: 2, channels: 3, background: "#00ff00" } })
+                .png().toBuffer()
+                .then(bytes => {
+                  if (bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+                    throw new Error("INVALID_PNG_HEADER");
+                  }
+                  console.log("H15_SHARP_NATIVE_RENDER=PASS");
+                })
+                .catch(error => {
+                  console.error("H15_SHARP_NATIVE_RENDER=FAIL " + error.name);
+                  process.exitCode = 1;
+                });
+            '
       - name: Preserve sanitized OCI inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
