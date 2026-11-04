@@ -55,6 +55,17 @@ repository and mismatched origin or branch. The relay does not enforce that
 check on writes; clients and the OS sandbox remain responsible for the boundary.
 An explicitly supplied empty or non-string `deviceId` is refused; only an omitted
 ID can use the existing single-device default.
+A device pairing code approved for a **new** device does not silently authorize
+replacing an already registered device belonging to the same owner. If the
+poller's `device_id` collides with an existing registration, the relay now
+requires the approved pairing record itself to bind that exact ID; otherwise
+it returns `device_id_conflict` and preserves the existing token and socket.
+The current browser pairing flow does not offer an explicit repair-target
+confirmation, so re-pairing that preserves an existing ID through the browser
+is intentionally unavailable until that owner-visible confirmation exists.
+The owner may explicitly delete the old registration and enroll a new identity;
+workspace bindings then require separate review. This does not itself prove
+host OS isolation or authorize real agent enrollment.
 
 The registry file must be a regular file, at most 16 KiB, without hard links;
 on POSIX it must be owned by root or the relay user and not group/world writable.
