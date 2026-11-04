@@ -10,7 +10,7 @@ import os from 'node:os';
 import { applyLegacyEnv } from 'brc-shared';
 applyLegacyEnv();
 import { WsClient } from './transport/ws-client.js';
-import { pairDevice, loadCredentials, clearCredentials, saveCredentials, type DeviceCredentials } from './transport/pairing.js';
+import { pairDevice, loadCredentials, clearCredentials, type DeviceCredentials } from './transport/pairing.js';
 import { callTool, listTools } from './dispatcher.js';
 import { VERSION as CORE_VERSION } from './core/version.js';
 import { setCurrentClient } from './context.js';
@@ -96,12 +96,7 @@ const start = (c: DeviceCredentials) => {
     relayUrl: c.relayUrl, token: c.deviceToken, deviceId: c.deviceId, name: c.name,
     agentVersion: AGENT_VERSION, coreVersion: CORE_VERSION, tools, callTool, log,
     onUnauthorized: async () => {
-      if (c.pairedAt === 'manual') return false;
-      log('warn', 'Relay rejected our device token; re-pairing');
-      clearCredentials();
-      const fresh = await pairDevice({ relayUrl: c.relayUrl, name: c.name, deviceId: c.deviceId, openBrowser: !flag('no-browser'), log: (m) => console.log(m) });
-      saveCredentials(fresh);
-      start(fresh);
+      log('error', 'Device authorization refused; reconnect stopped. Pair again explicitly if approved.');
       return true;
     },
   });

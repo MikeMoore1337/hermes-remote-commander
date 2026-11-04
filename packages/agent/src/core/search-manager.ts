@@ -118,6 +118,9 @@ export interface SearchSessionOptions {
     if (timeoutMs) {
       killTimer = setTimeout(() => {
         if (!session.isComplete && !session.process.killed) {
+          session.isError = true;
+          session.wasIncomplete = true;
+          session.error = 'HERMES_SEARCH_TIMEOUT: results are incomplete; narrow the path or increase timeout_ms.';
           session.process.kill('SIGTERM');
         }
       }, timeoutMs);
@@ -880,7 +883,7 @@ export interface SearchSessionOptions {
       }
 
       // If we have results, don't mark as error even if there were permission issues
-      if (session.totalMatches > 0) {
+      if (session.totalMatches > 0 && !session.wasIncomplete) {
         session.isError = false;
       }
 

@@ -55,6 +55,7 @@ interface CompletedSession {
  */
 export const MAX_BUFFERED_OUTPUT_CHARS = 50 * 1024 * 1024;  // per session; oldest lines evicted first
 const MAX_LINE_CHARS = 1024 * 1024;                  // force-split longer lines so eviction can work
+export const MAX_HERMES_TIMING_EVENTS = 128;
 const MAX_WAIT_OUTPUT_CHARS = 2 * 1024 * 1024;       // start_process wait buffer (prompt/state detection)
 
 // Result type for paginated output reading
@@ -307,6 +308,7 @@ export class TerminalManager {
     let firstOutputTime: number | undefined;
     let lastOutputTime: number | undefined;
     const outputEvents: OutputEvent[] = [];
+    let outputEventsTruncated = false;
     let exitReason: TimingInfo['exitReason'] = 'timeout';
 
     return new Promise((resolve) => {
@@ -332,7 +334,8 @@ export class TerminalManager {
             firstOutputTime,
             lastOutputTime,
             timeToFirstOutputMs: firstOutputTime ? firstOutputTime - startTime : undefined,
-            outputEvents: outputEvents.length > 0 ? outputEvents : undefined
+            outputEvents: outputEvents.length > 0 ? outputEvents : undefined,
+            outputEventsTruncated
           };
         }
 
@@ -376,8 +379,9 @@ export class TerminalManager {
         this.appendToLineBuffer(session, text);
 
         // Record output event if collecting timing
-        if (collectTiming) {
-          outputEvents.push({
+        if (collectTiming && !resolved) {
+          if (outputEvents.length >= MAX_HERMES_TIMING_EVENTS) { outputEventsTruncated = true; }
+          else outputEvents.push({
             timestamp: now,
             deltaMs: now - startTime,
             source: 'stdout',
@@ -391,7 +395,7 @@ export class TerminalManager {
           session.isBlocked = true;
           exitReason = 'early_exit_quick_pattern';
 
-          if (collectTiming && outputEvents.length > 0) {
+          if (collectTiming && !resolved && !outputEventsTruncated && outputEvents.length > 0) {
             outputEvents[outputEvents.length - 1].matchedPattern = 'quick_pattern';
           }
 
@@ -420,8 +424,9 @@ export class TerminalManager {
         this.appendToLineBuffer(session, text);
 
         // Record output event if collecting timing
-        if (collectTiming) {
-          outputEvents.push({
+        if (collectTiming && !resolved) {
+          if (outputEvents.length >= MAX_HERMES_TIMING_EVENTS) { outputEventsTruncated = true; }
+          else outputEvents.push({
             timestamp: now,
             deltaMs: now - startTime,
             source: 'stderr',
@@ -761,10 +766,13 @@ export class TerminalManager {
     }
 
     try {
-        session.process.kill('SIGINT');
+        if (!session.process.kill('SIGINT')) {
+          return false;
+        }
         setTimeout(() => {
-          if (this.sessions.has(pid)) {
-            session.process.kill('SIGKILL');
+          if (this.sessions.get(pid) === session) {
+            try { if (!session.process.kill('SIGKILL')) console.error('HERMES_TERMINATION_ESCALATION_FAILED'); }
+            catch { console.error('HERMES_TERMINATION_ESCALATION_FAILED'); }
           }
         }, 1000);
         return true;

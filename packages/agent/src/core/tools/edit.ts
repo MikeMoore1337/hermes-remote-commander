@@ -242,6 +242,7 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
     if (count > 0 && count !== expectedReplacements) {
         capture('server_edit_block_unexpected_count', {fileExtension: fileExtension, expectedReplacements, expectedReplacementsCount: count});
         return {
+            isError: true,
             content: [{ 
                 type: "text", 
                 text: `Expected ${expectedReplacements} occurrences but found ${count} in ${filePath}. ` + 

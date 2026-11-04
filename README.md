@@ -1,5 +1,12 @@
 # Better Remote Commander
 
+> **Hermes fork: development candidate.** The upstream npm packages and container images
+> mentioned below do not contain the Hermes changes. Do not use them as this fork.
+> Shell commands run with the agent's OS permissions; `allowedDirectories` is not a
+> shell sandbox. Use a separately approved, unprivileged OS/container boundary and
+> disposable workspaces. No production cutover is implied by this source tree.
+> See [Hermes fork status and provenance](docs/hermes-fork.md).
+
 Self-hosted remote control of your own computers from **Claude** and **ChatGPT**.
 Files, terminal and processes on any machine you pair — through a relay **you** host, on **your** domain.
 

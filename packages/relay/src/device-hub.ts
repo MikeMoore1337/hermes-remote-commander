@@ -33,6 +33,8 @@ interface Pending {
   resolve: (r: ToolResult) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  deviceId: string;
+  socket: WebSocket;
 }
 
 export class DeviceHub {
@@ -55,6 +57,9 @@ export class DeviceHub {
       if (!msg) return;
 
       if (msg.type === 'hello') {
+        if (deviceId !== null) {
+          return socket.close(1002, 'duplicate hello');
+        }
         if (msg.protocol !== BRC_PROTOCOL_VERSION) {
           this.sendTo(socket, { type: 'error', code: 'PROTOCOL_MISMATCH', message: `relay speaks v${BRC_PROTOCOL_VERSION}`, fatal: true });
           return socket.close(1002, 'protocol mismatch');
@@ -67,6 +72,7 @@ export class DeviceHub {
         const prev = this.devices.get(deviceId);
         if (prev && prev.socket !== socket) {
           this.log('info', `device ${deviceId} reconnected; closing stale socket`);
+          this.rejectPending(deviceId, prev.socket, 'DEVICE_REPLACED');
           prev.socket.terminate();
         }
         this.devices.set(deviceId, { info: msg.device, tools: msg.tools, ownerId, connectedAt: Date.now(), lastSeen: Date.now(), socket });
@@ -78,12 +84,15 @@ export class DeviceHub {
 
       if (!deviceId) return; // ignore anything before hello
       const dev = this.devices.get(deviceId);
-      if (dev) dev.lastSeen = Date.now();
+      // No superseded/foreign socket can update activity or complete a
+      // pending command, even when it knows a previously issued call ID.
+      if (!dev || dev.socket !== socket) return;
+      dev.lastSeen = Date.now();
 
       if (msg.type === 'pong') return;
       if (msg.type === 'result') {
         const p = this.pending.get(msg.id);
-        if (!p) return;
+        if (!p || p.socket !== socket || p.deviceId !== deviceId) return;
         this.pending.delete(msg.id);
         clearTimeout(p.timer);
         if (msg.error) p.reject(new Error(`${msg.error.code}: ${msg.error.message}`));
@@ -93,6 +102,7 @@ export class DeviceHub {
 
     socket.on('close', () => {
       if (deviceId && this.devices.get(deviceId)?.socket === socket) {
+        this.rejectPending(deviceId, socket, 'DEVICE_DISCONNECTED');
         this.devices.delete(deviceId);
         this.log('info', `device offline: ${deviceId}`);
       }
@@ -111,7 +121,7 @@ export class DeviceHub {
         this.pending.delete(id);
         reject(new Error(`CALL_TIMEOUT: ${tool} after ${timeoutMs} ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, deviceId, socket: dev.socket });
       this.sendTo(dev.socket, { type: 'call', id, tool, args, client: opts.client, timeoutMs });
     });
   }
@@ -133,11 +143,21 @@ export class DeviceHub {
     return list.length === 1 ? list[0].deviceId : null;
   }
 
+  private rejectPending(deviceId: string, socket: WebSocket, reason: string): void {
+    for (const [id, p] of this.pending) {
+      if (p.deviceId !== deviceId || p.socket !== socket) continue;
+      this.pending.delete(id);
+      clearTimeout(p.timer);
+      p.reject(new Error(reason));
+    }
+  }
+
   private tick(): void {
     const now = Date.now();
     for (const [id, dev] of this.devices) {
       if (now - dev.lastSeen > DEFAULTS.pongTimeoutMs) {
         this.log('warn', `device ${id} missed heartbeats; terminating`);
+        this.rejectPending(id, dev.socket, 'DEVICE_HEARTBEAT_EXPIRED');
         dev.socket.terminate();
         this.devices.delete(id);
         continue;

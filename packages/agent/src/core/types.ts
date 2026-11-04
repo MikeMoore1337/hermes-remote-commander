@@ -42,6 +42,7 @@ export interface TimingInfo {
   lastOutputTime?: number;
   timeToFirstOutputMs?: number;
   outputEvents?: OutputEvent[];
+  outputEventsTruncated?: boolean;
 }
 
 export interface OutputEvent {

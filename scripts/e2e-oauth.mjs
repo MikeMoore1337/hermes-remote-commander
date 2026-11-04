@@ -37,7 +37,7 @@ const pending = html.match(/name="pending" value="([^"]+)"/)?.[1];
 step('consent page', r.status === 200 && !!pending, `pending=${pending}`);
 
 // 5. allow -> code
-r = await fetch(`${base}/auth/consent`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ pending, decision: 'allow' }) });
+r = await fetch(`${base}/auth/consent`, { method: 'POST', redirect: 'manual', headers: { cookie, origin: base, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ pending, decision: 'allow' }) });
 const cb = new URL(r.headers.get('location'));
 const code = cb.searchParams.get('code');
 step('consent -> code', r.status === 302 && !!code && cb.searchParams.get('state') === state, `${cb.origin}${cb.pathname}`);
