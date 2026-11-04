@@ -25,11 +25,11 @@ RUN set -eu; \
     printf '%s\n' \
       'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] http://snapshot.debian.org/archive/debian/20261102T000000Z bookworm main' \
       'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20261102T000000Z bookworm-security main' > /etc/apt/sources.list; \
-    apt-get -o Acquire::Check-Valid-Until=false -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates; \
+    apt-get -o Acquire::Retries=5 -o Acquire::Check-Valid-Until=false -o APT::Update::Error-Mode=any update; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates; \
     sed -i 's|http://snapshot.debian.org|https://snapshot.debian.org|g' /etc/apt/sources.list; \
-    apt-get -o Acquire::Check-Valid-Until=false -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash git curl procps python3; \
+    apt-get -o Acquire::Retries=5 -o Acquire::Check-Valid-Until=false -o APT::Update::Error-Mode=any update; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends bash git curl procps python3; \
     git --version; python3 --version; \
     rm -rf /var/lib/apt/lists/*; \
     useradd -m -s /bin/bash rdp; mkdir -p /home/rdp/.brc; chown rdp:rdp /home/rdp/.brc
