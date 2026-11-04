@@ -220,6 +220,18 @@ previous Hermes build: compatibility with this fork is **not verified**. Do not
 run its cutover mode for a fork image until that contract has been reviewed and
 tested for the exact candidate.
 
+Docker CI builds the fork relay with `HERMES_SOURCE_REVISION` equal to
+the **checked-out CI commit** and inspects the OCI source and revision labels,
+image user, entrypoint, database default and absence of implicit volumes. For
+pull-request workflows, the checked-out commit can be GitHub's synthetic merge
+commit rather than the PR's head SHA. Standalone/Compose developer builds
+default to the honest `unverified` label; they are not production-admissible.
+Labels alone are self-declared metadata, **not proof of source identity**.
+A future production gate must independently pin the candidate OCI archive,
+config digest, verified build receipt, exact released source commit and runtime
+mount/user policy. This source-only CI change does not provide that gate or
+authorize the legacy Hermes operator, which remains incompatible.
+
 The Docker CI also runs `scripts/h454_fork_legacy_state_smoke.sh` against a
 **disposable** fork relay. It overrides the image user to a synthetic legacy
 `979:975`, binds a private tmpfs to `/state`, sets

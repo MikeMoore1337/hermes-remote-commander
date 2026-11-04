@@ -18,6 +18,11 @@ RUN pnpm --filter brc-shared build && pnpm --filter brc-agent build && pnpm --fi
 RUN pnpm --filter brc-relay --prod deploy --legacy /out
 
 FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
+# Local builds remain usable with an unverified label; production admission
+# must independently pin the digest AND reject an unverified source revision.
+ARG HERMES_SOURCE_REVISION=unverified
+LABEL org.opencontainers.image.source="https://github.com/MikeMoore1337/hermes-remote-commander" \
+      org.opencontainers.image.revision="${HERMES_SOURCE_REVISION}"
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 BRC_DB=/data/relay.sqlite
 RUN addgroup -S rdp && adduser -S rdp -G rdp && mkdir -p /data && chown rdp:rdp /data
 WORKDIR /app
