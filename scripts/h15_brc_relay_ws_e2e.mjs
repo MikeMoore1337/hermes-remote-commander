@@ -326,6 +326,42 @@ try {
   }
   console.log('WSS_ADMIN_REVOKE_REJECTS_PENDING_NO_REPLAY=PASS');
 
+  for (const [index, frame] of [
+    {type:'hello',protocol:1},
+    {...hello,device:null},
+    {...hello,tools:[null]},
+  ].entries()) {
+    const id = `malformed-${index}`;
+    const token = relay.store.issueDeviceToken(id, user.id, id, 'linux');
+    const connection = await connectOnce(base, {headers:{Authorization:'Bearer ' + token}});
+    if (!connection.accepted) throw Error('MALFORMED_SOCKET_REJECTED_TOO_EARLY');
+    const socket = connection.socket;
+    inflightSockets.push(socket);
+    const closed = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('MALFORMED_HELLO_NOT_CLOSED')), 2000);
+      socket.once('close', code => { clearTimeout(timer); resolve(code); });
+    });
+    socket.send(JSON.stringify(frame));
+    if ((await closed) !== 1002 || relay.hub.get(id)) throw Error('MALFORMED_HELLO_ACCEPTED');
+  }
+  const closingId = 'closing-socket';
+  const closingToken = relay.store.issueDeviceToken(closingId, user.id, closingId, 'linux');
+  const closing = await connectOnce(base, {headers:{Authorization:'Bearer ' + closingToken}});
+  if (!closing.accepted) throw Error('CLOSING_SOCKET_REJECTED');
+  inflightSockets.push(closing.socket);
+  closing.socket.send(JSON.stringify({...hello,device:{...hello.device,deviceId:closingId,name:closingId}}));
+  for (let attempt = 0; attempt < 50 && !relay.hub.get(closingId); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  const closingServer = relay.hub.get(closingId);
+  if (!closingServer) throw Error('CLOSING_SOCKET_NOT_BOUND');
+  closingServer.socket.close(1000, 'synthetic close');
+  if (relay.hub.get(closingId) || relay.hub.list(user.id).some(device => device.deviceId === closingId) ||
+      listUserDevices(relay.hub, relay.store, user.id).find(device => device.deviceId === closingId)?.online) {
+    throw Error('CLOSING_SOCKET_REPORTED_ONLINE');
+  }
+  console.log('WSS_MALFORMED_HELLO_AND_CLOSING_SOCKET=DENIED');
+
   console.log('HERMES_BRC_WSS_AUTH_E2E=PASS');
 } finally {
   if (goodSocket) goodSocket.terminate();
