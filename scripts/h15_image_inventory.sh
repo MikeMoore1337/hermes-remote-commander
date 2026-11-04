@@ -26,7 +26,7 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
   for (const name of ["sharp", "@img/sharp-linux-x64", "@img/sharp-libvips-linux-x64",
     "@img/sharp-linuxmusl-x64", "@img/sharp-libvips-linuxmusl-x64"]) {
     const file = path.resolve("node_modules", name, "package.json");
-    if (!fs.existsSync(file)) { console.log(`${name}\tNOT_INSTALLED`); continue; }
+    if (!fs.existsSync(file)) { console.log(`${name}\tNOT_FOUND_AT_TOP_LEVEL`); continue; }
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
     console.log(`${name}\t${data.version}\t${data.license || "LICENSE_NOT_DECLARED"}`);
   }
