@@ -182,6 +182,13 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     };
   }
 
+  if (result.exitCode !== undefined && result.exitCode !== 0) {
+    return {
+      content: [{ type: "text", text: `Process ${result.pid} exited with code ${result.exitCode ?? 'unknown'}\nOutput:\n${result.output}` }],
+      isError: true,
+    };
+  }
+
   // Analyze the process state to detect if it's waiting for input
   const processState = analyzeProcessState(result.output, result.pid);
 
@@ -381,6 +388,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
       type: "text",
       text: `${statusMessage}\n\n${responseText}${processStateMessage}${timingMessage}`
     }],
+    isError: result.isComplete && result.exitCode !== 0,
   };
 }
 

@@ -314,6 +314,7 @@ export class TerminalManager {
     return new Promise((resolve) => {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
+      let waitTimer: NodeJS.Timeout | null = null;
 
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
@@ -322,6 +323,7 @@ export class TerminalManager {
         if (resolved) return;
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
+        if (waitTimer) clearTimeout(waitTimer);
 
         // Add timing info if requested
         if (collectTiming) {
@@ -346,12 +348,13 @@ export class TerminalManager {
       // a successful spawn means the process is gone, so the caller must not sit
       // waiting for output that will never arrive.
       forwardProcessError = (err: Error) => {
-        this.sessions.delete(childProcess.pid!);
+        if (this.sessions.get(childProcess.pid!) === session) this.sessions.delete(childProcess.pid!);
         exitReason = 'process_exit';
         resolveOnce({
           pid: childProcess.pid!,
           output: output + `\nProcess error: ${err.message}`,
-          isBlocked: false
+          isBlocked: false,
+          exitCode: null
         });
       };
       // An error emitted between spawn and here (the common case — spawn errors
@@ -437,7 +440,7 @@ export class TerminalManager {
       });
 
       // Periodic comprehensive check every 100ms
-      periodicCheck = setInterval(() => {
+      if (!resolved) periodicCheck = setInterval(() => {
         if (output.trim()) {
           const processState = analyzeProcessState(output, childProcess.pid);
           if (processState.isWaitingForInput) {
@@ -453,7 +456,7 @@ export class TerminalManager {
       }, 100);
 
       // Timeout fallback
-      setTimeout(() => {
+      if (!resolved) waitTimer = setTimeout(() => {
         session.isBlocked = true;
         exitReason = 'timeout';
         resolveOnce({
@@ -463,8 +466,9 @@ export class TerminalManager {
         });
       }, timeoutMs);
 
-      childProcess.on('exit', (code: any) => {
-        if (childProcess.pid) {
+      // A process can exit before its stdout/stderr pipes have drained.
+      childProcess.on('close', (code: number | null) => {
+        if (childProcess.pid && this.sessions.get(childProcess.pid) === session) {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
             pid: childProcess.pid,
@@ -488,7 +492,8 @@ export class TerminalManager {
         resolveOnce({
           pid: childProcess.pid!,
           output,
-          isBlocked: false
+          isBlocked: false,
+          exitCode: code
         });
       });
     });
@@ -761,7 +766,7 @@ export class TerminalManager {
 
   forceTerminate(pid: number): boolean {
     const session = this.sessions.get(pid);
-    if (!session) {
+    if (!session || session.process.exitCode != null || session.process.signalCode != null) {
       return false;
     }
 
@@ -770,7 +775,8 @@ export class TerminalManager {
           return false;
         }
         setTimeout(() => {
-          if (this.sessions.get(pid) === session) {
+          if (this.sessions.get(pid) === session &&
+              session.process.exitCode == null && session.process.signalCode == null) {
             try { if (!session.process.kill('SIGKILL')) console.error('HERMES_TERMINATION_ESCALATION_FAILED'); }
             catch { console.error('HERMES_TERMINATION_ESCALATION_FAILED'); }
           }
@@ -786,7 +792,8 @@ export class TerminalManager {
 
   listActiveSessions(): ActiveSession[] {
     const now = new Date();
-    return Array.from(this.sessions.values()).map(session => ({
+    return Array.from(this.sessions.values()).filter(session =>
+      session.process.exitCode == null && session.process.signalCode == null).map(session => ({
       pid: session.pid,
       isBlocked: session.isBlocked,
       runtime: now.getTime() - session.startTime.getTime()
