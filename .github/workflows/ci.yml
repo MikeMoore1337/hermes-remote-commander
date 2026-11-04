@@ -57,6 +57,33 @@ jobs:
         with: { persist-credentials: false }
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - run: docker build -f packages/relay/Dockerfile -t brc/relay:ci .
+      - name: Verify Compose builds this fork and explicitly mounts SQLite state
+        shell: bash
+        env:
+          PUBLIC_URL: http://127.0.0.1:3000
+          BRC_ADMIN_PASSWORD: synthetic-ci-only
+          BRC_SESSION_SECRET: synthetic-ci-only
+        run: |
+          set -euo pipefail
+          docker compose --profile local --profile cloud config --format json | node -e '
+            let content = "";
+            process.stdin.on("data", chunk => content += chunk);
+            process.stdin.on("end", () => {
+              const spec = JSON.parse(content);
+              for (const name of ["relay", "relay-cloud"]) {
+                const service = spec.services[name];
+                if (!service || service.pull_policy !== "build" ||
+                    service.build?.dockerfile !== "packages/relay/Dockerfile" ||
+                    !service.image.startsWith("hermes-remote-commander/relay:") ||
+                    !service.volumes?.some(m => m.type === "volume" && m.target === "/data")) {
+                  console.error("H454_COMPOSE_UPSTREAM_OR_IMPLICIT_STATE");
+                  process.exitCode = 1;
+                  return;
+                }
+              }
+              console.log("H454_FORK_COMPOSE_SOURCE_AND_STATE=PASS");
+            });
+          '
       - name: Refuse relay image implicit writable volumes (disposable inspection)
         shell: bash
         run: |
