@@ -57,6 +57,29 @@ jobs:
         with: { persist-credentials: false }
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - run: docker build -f packages/relay/Dockerfile -t brc/relay:ci .
+      - name: Refuse relay image implicit writable volumes (disposable inspection)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cid="$(docker create --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges brc/relay:ci)"
+          trap 'docker rm -v "$cid" >/dev/null 2>&1 || true' EXIT
+          docker inspect "$cid" | node -e '
+            let data = "";
+            process.stdin.on("data", chunk => data += chunk);
+            process.stdin.on("end", () => {
+              const [c] = JSON.parse(data);
+              if (Object.keys(c.Config.Volumes || {}).length !== 0 || c.Mounts.length !== 0) {
+                console.error("H454_UNAPPROVED_IMAGE_VOLUME");
+                process.exitCode = 1;
+              } else if (c.HostConfig.ReadonlyRootfs !== true || c.HostConfig.Privileged !== false) {
+                console.error("H454_CONTAINER_SECURITY_CONTRACT_CHANGED");
+                process.exitCode = 1;
+              } else {
+                console.log("H454_EXPLICIT_RELAY_STATE_VOLUME=PASS");
+              }
+            });
+          '
       - run: docker build -f packages/agent/Dockerfile -t brc/agent:ci .
       - name: Verify notices in both images
         run: |
