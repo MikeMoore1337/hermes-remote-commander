@@ -2,6 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SqliteStore, verifyPassword, hashPassword } from '../dist/store/sqlite.js';
 import { LoginLimiter } from '../dist/auth/rate-limit.js';
 import { DeviceHub } from '../dist/device-hub.js';
@@ -35,6 +38,57 @@ test('store: device token issue / lookup / revoke, pairing codes, audit', () => 
   s.audit({ ts: Date.now(), user_id: u.id, device_id: 'dev1', client: 'c', tool: 'read_file', args_hash: 'ab', ok: 0, ms: 5, error: 'x' });
   assert.deepEqual(s.auditStats(u.id), { total: 2, failed: 1, last24h: 2 });
   s.close();
+});
+
+test('store: restart preserves unchanged admin credentials and revoked grants', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h454-relay-sqlite-'));
+  const dbFile = join(root, 'relay.sqlite');
+  try {
+    const original = new SqliteStore(dbFile);
+    let owner;
+    let originalHash;
+    try {
+      owner = original.upsertUser('admin', 'unchanged-ci-password');
+      originalHash = owner.password_hash;
+      const deviceToken = original.issueDeviceToken('offline-ci-device', owner.id, 'Offline', 'linux');
+      original.setDevicePaused('offline-ci-device', true);
+      assert.ok(original.getDeviceByToken(deviceToken)?.paused);
+      const accessToken = 'synthetic-revoked-access';
+      original.insertToken({
+        token_hash: createHash('sha256').update(accessToken).digest('hex'),
+        kind: 'access', client_id: 'ci', user_id: owner.id, scopes: 'mcp:tools',
+        resource: null, expires_at: null, created_at: Date.now(), revoked: 0,
+      });
+      original.revokeToken(accessToken);
+      assert.equal(original.getToken(accessToken, 'access'), undefined);
+      const apiKey = original.createApiKey(owner.id, 'synthetic');
+      original.revokeApiKey(owner.id, apiKey.prefix);
+      assert.equal(original.listApiKeys(owner.id).length, 0);
+    } finally {
+      original.close();
+    }
+
+    const restarted = new SqliteStore(dbFile);
+    try {
+      const unchanged = restarted.upsertUser('admin', 'unchanged-ci-password');
+      assert.equal(unchanged.id, owner.id);
+      assert.equal(unchanged.password_hash, originalHash, 'restart must retain the exact hash');
+      assert.equal(restarted.getDevice('offline-ci-device')?.paused, 1);
+      assert.equal(restarted.getToken('synthetic-revoked-access', 'access'), undefined);
+      assert.equal(restarted.listApiKeys(owner.id).length, 0);
+
+      const rotated = restarted.upsertUser('admin', 'intentionally-changed-password');
+      assert.equal(rotated.id, owner.id);
+      assert.notEqual(rotated.password_hash, originalHash, 'changed password must rotate the hash');
+      assert.equal(verifyPassword('unchanged-ci-password', rotated.password_hash), false);
+      assert.equal(verifyPassword('intentionally-changed-password', rotated.password_hash), true);
+      assert.equal(restarted.getDevice('offline-ci-device')?.paused, 1);
+    } finally {
+      restarted.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('store: tokens expire and revoke', () => {

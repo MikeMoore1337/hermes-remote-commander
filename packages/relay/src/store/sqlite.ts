@@ -59,11 +59,16 @@ export class SqliteStore {
   }
   upsertUser(username: string, password: string): UserRow {
     const existing = this.getUserByName(username);
-    const hash = hashPassword(password);
     if (existing) {
+      // A restart with the same admin password must not rotate its salted hash.
+      // Unnecessary rotation would make a byte-for-byte credential rollback
+      // comparison reject an otherwise unchanged persisted relay identity.
+      if (verifyPassword(password, existing.password_hash)) return existing;
+      const hash = hashPassword(password);
       this.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, existing.id);
       return { ...existing, password_hash: hash };
     }
+    const hash = hashPassword(password);
     const row: UserRow = { id: randomToken(12), username, password_hash: hash, created_at: Date.now() };
     this.db.prepare('INSERT INTO users VALUES (?,?,?,?)').run(row.id, row.username, row.password_hash, row.created_at);
     return row;
