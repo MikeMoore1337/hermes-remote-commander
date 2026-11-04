@@ -27,6 +27,7 @@ import * as pages from './pages/html.js';
 import * as adminPages from './pages/admin.js';
 import { LoginLimiter } from './auth/rate-limit.js';
 import { withinJsonElementLimit } from 'brc-shared';
+import { observerEnabled, observation, publishObservation } from './hermes-observer.js';
 
 export interface RelayConfig {
   port: number;
@@ -39,6 +40,7 @@ export interface RelayConfig {
   adminPassword: string;
   relayVersion: string;
   workspaceRegistryPath?: string;
+  observerDirectory?: string;
 }
 
 export function loadConfig(): RelayConfig {
@@ -55,6 +57,7 @@ export function loadConfig(): RelayConfig {
     adminPassword: env.BRC_ADMIN_PASSWORD ?? '',
     relayVersion: '2.0.2',
     workspaceRegistryPath: env.BRC_WORKSPACE_REGISTRY,
+    observerDirectory: env.BRC_OBSERVER_DIR,
   };
 }
 
@@ -358,11 +361,19 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
 
   const housekeeping = setInterval(() => store.vacuumExpired(), 10 * 60_000);
   housekeeping.unref();
+  const observe = () => {
+    if (!cfg.observerDirectory || !observerEnabled(cfg.observerDirectory)) return;
+    try { publishObservation(cfg.observerDirectory, observation(hub, store, admin.id, workspaces)); }
+    catch { log('warn', 'HERMES_OBSERVER_REFUSED'); }
+  };
+  observe();
+  const observer = cfg.observerDirectory ? setInterval(observe, 60_000) : undefined;
+  observer?.unref();
 
   log('info', `admin user "${admin.username}" ready; db ${cfg.dbFile}`);
 
   return {
     http, hub, store,
-    close: async () => { clearInterval(housekeeping); hub.close(); wss.close(); await new Promise<void>((r) => http.close(() => r())); store.close(); },
+    close: async () => { clearInterval(housekeeping); if (observer) clearInterval(observer); hub.close(); wss.close(); await new Promise<void>((r) => http.close(() => r())); store.close(); },
   };
 }

@@ -73,6 +73,16 @@ It fails with `HERMES_BROWSER_UNAVAILABLE` when none is available; it neither
 downloads a browser nor prunes browser caches. Browser ownership, executable
 permissions and network isolation remain deployment responsibilities.
 
+The optional POSIX Control Center observer is off by default. Only when
+`BRC_OBSERVER_DIR` names a private non-root relay-owned directory containing a
+relay-owned `0600` file `.hermes-brc-observer-enable` with `enabled\n` does it
+write a bounded `hermes-brc-observation.json` there. It projects only the
+configured admin owner's devices and sandbox workspaces, checks the current
+device grant and socket binding, and does not expose device IDs or credentials.
+Presence is not proof of command execution, Git state or host isolation. The
+Hermes bridge and Control Center need the schema-2 consumer; configuration,
+enabling the marker and deployment require separate owner approval.
+
 The scoped `exceljs > unzipper` override uses MIT-licensed `unzipper@0.12.3`
 and removes `binary > buffers@0.1.1` from the lockfile. The MCP XLSX
 read/write/edit paths and an ordered-fixture streaming read are tested. ExcelJS
