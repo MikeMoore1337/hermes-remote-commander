@@ -231,7 +231,10 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     const deviceId = device_id || row.device_id || `dev_${row.user_code.replace('-', '').toLowerCase()}`;
     const previousGrant = store.getDevice(deviceId);
     // Pairing may rotate a device for its owner, never steal another owner's ID.
-    if (previousGrant && previousGrant.user_id !== row.user_id) {
+    // Approval of a new pairing code does not authorize silently replacing
+    // another device owned by the same account. Explicit repair requires the
+    // approved pairing record to bind the exact existing device ID.
+    if (previousGrant && (previousGrant.user_id !== row.user_id || row.device_id !== deviceId)) {
       return res.status(409).json({ error: 'device_id_conflict' });
     }
     const token = store.issueDeviceToken(deviceId, row.user_id, name || row.client_name, platform ?? null);
