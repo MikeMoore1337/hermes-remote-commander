@@ -16,6 +16,13 @@ Hermes changes were reviewed against its source at [`f2b6bafad4dcb62059629151945
 | Recovery | Reconnect with backoff | Old/foreign replies rejected; pending calls fail on disconnect | Prove real reboot/reconnect; a completed side effect cannot be undone |
 | Security | Agent has its OS user's rights | Device-grant, CSRF and relay policy hardening | OS sandbox, per-device authorization and independent review |
 
+On token rotation or device removal, the relay disconnects the current socket
+and rejects its pending calls; a result received after a changed grant is also
+rejected. An agent sends a result only on the connection that received the call,
+so reconnect does not replay it. Revocation does not cancel an OS process or
+undo side effects that already began; local WebSocket tests do not prove runtime
+isolation or behavior on an owner's devices.
+
 `kill_process` rejects process groups, PID 1 and the agent's own PID. Other
 positive PIDs remain subject to the agent's OS permissions; a successful result
 only confirms that a signal was sent, not that the process or descendants exited.
@@ -144,6 +151,19 @@ relinkability for an actual distributed binary. Those items, including the exact
 Linux image inventory and available source for each native component, remain
 **BLOCKED** before binary publication. See the [LGPL v3](https://www.gnu.org/licenses/lgpl-3.0.html)
 and [FSF source-distribution guidance](https://www.gnu.org/licenses/gpl-faq.en.html#SourceAndBinaryOnDifferentSites).
+
+An offline OS-package scan of local candidate images built from fork commit
+`726b14218714f47d9e95f63393837a07fd5a59fb`, with Trivy 0.73.0 and a database
+updated 2026-11-04 01:28 UTC, reported 66 HIGH and 2 CRITICAL package records in
+the Debian agent and none in the Alpine relay. These are scanner records, not
+demonstrated exploitability; the database listed no fixed Bookworm version for
+the HIGH/CRITICAL records. For the two CRITICAL records, Debian describes
+`libsqlite3-0` 3.40.1-2+deb12u2 as vulnerable if an attacker can execute
+crafted SQL, while its tracker notes that the vulnerable minizip code for
+`zlib1g` CVE-2023-45853 is not built into the Bookworm binary. See
+[Debian's SQLite tracker](https://security-tracker.debian.org/tracker/CVE-2025-7458)
+and [zlib tracker](https://security-tracker.debian.org/tracker/CVE-2023-45853).
+No production image or real device was tested; binary distribution remains blocked.
 
 The upstream automatic publishing workflow has been removed from this branch:
 it could push directly to `main` and publish npm packages and container images.
