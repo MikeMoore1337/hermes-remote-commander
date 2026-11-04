@@ -30,14 +30,14 @@ Tools available to the AI (24): `read_file`, `write_file`, `edit_block`, `list_d
 
 **Docker (recommended)**
 ```bash
-git clone https://github.com/shahidx0x/better-remote-commander.git && cd better-remote-commander
+git clone https://github.com/MikeMoore1337/hermes-remote-commander.git && cd hermes-remote-commander
 cp .env.example .env        # set PUBLIC_URL, BRC_ADMIN_PASSWORD, BRC_SESSION_SECRET
 docker compose --profile cloud up -d                            # VPS with your domain (Caddy, auto-TLS)
 docker compose --profile tunnel --profile cloudflare up -d      # your PC via Cloudflare Tunnel
 docker compose --profile tunnel --profile ngrok up -d           # your PC via a static ngrok domain
 docker compose --profile local up -d                            # localhost only (testing)
 ```
-Images are published to `ghcr.io/shahidx0x/better-remote-commander/relay` and `/agent`.
+The fork's Compose relay is built from this checked-out source (`pull_policy: build`) and explicitly mounts `relay-data:/data`. Upstream GHCR images and npm packages do **not** contain Hermes changes. No fork packages or images are published; starting a real relay or agent requires separate owner runtime approval.
 
 **Without Docker**
 ```ash
