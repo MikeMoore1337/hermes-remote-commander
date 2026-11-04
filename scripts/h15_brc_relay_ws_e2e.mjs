@@ -148,6 +148,26 @@ try {
   }
   console.log('WSS_FOREIGN_DEVICE_ID_PAIRING=DENIED');
 
+  // The owner approved a new device, not replacement of an unrelated
+  // already-paired device of the same owner. The poller's device_id alone
+  // must not authorize a silent re-key or displace the active socket.
+  const unboundCode = relay.store.createDeviceCode('same-owner-unbound', 60000);
+  relay.store.approveDeviceCode(unboundCode.device_code, user.id, '');
+  const unboundAttempt = await fetch('http://127.0.0.1:' + addr.port + '/device/poll', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      device_code: unboundCode.device_code,
+      device_id: 'sandbox-agent', name: 'unauthorized-replacement', platform: 'linux',
+    }),
+  });
+  const unboundBody = await unboundAttempt.json();
+  if (unboundAttempt.status !== 409 || unboundBody.error !== 'device_id_conflict' ||
+      relay.store.getDevice('sandbox-agent')?.token_hash !== expectedHash ||
+      relay.hub.get('sandbox-agent')?.socket !== connected) {
+    throw Error('SAME_OWNER_UNBOUND_DEVICE_ID_TAKEOVER');
+  }
+  console.log('WSS_SAME_OWNER_UNBOUND_REPLACEMENT=DENIED');
+
   const ctx = {userId:user.id,clientId:'synthetic-only'};
   const args = {deviceId:'sandbox-agent',path:'/workspace/synthetic.txt'};
   const newToken = relay.store.issueDeviceToken('sandbox-agent',user.id,'sandbox-agent','linux');
