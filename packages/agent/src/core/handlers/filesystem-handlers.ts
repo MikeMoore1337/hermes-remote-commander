@@ -296,7 +296,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
         }
     }
 
-    return { content: contentItems };
+    return { content: contentItems, isError: fileResults.some(result => Boolean(result.error)) };
 }
 
 /**
