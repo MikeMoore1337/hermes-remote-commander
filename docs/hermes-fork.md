@@ -195,6 +195,24 @@ No production deployment is approved by these commands or by CI.
 
 ## Migration and rollback
 
+### Relay state volumes
+The fork relay Dockerfile no longer declares `VOLUME /data`. Docker previously
+created an anonymous writable `/data` volume even for a read-only container
+whose actual SQLite database was placed at `/state`. That hidden mount violates
+the Hermes operator's single-explicit-state-mount requirement.
+
+The default SQLite path is still `/data/relay.sqlite`, so any persistent
+deployment must **explicitly** mount a verified owner-managed `/data` volume
+or set `BRC_DB` to an explicitly mounted writable state directory.
+The supplied `docker-compose.yml` already mounts `relay-data:/data`.
+A read-only container with no authorized writable state mount must fail closed.
+
+Docker CI checks the built relay image with `docker create --read-only`
+and refuses image-declared volumes or unexpected runtime mounts. This test
+does not prove the owner's live image identity, UID, DB permissions, OAuth
+compatibility or safe cutover. The old Hermes operator must still **not** be
+used for a fork image without a reviewed fork-specific admission contract.
+
 The existing [Hermes transactional relay guide](https://github.com/MikeMoore1337/hermes/blob/f2b6bafad4dcb620596291519456f6b8654f6a11/docs/operations/h15-brc-transactional-cutover.md)
 describes a protected SQLite backup, disposable restore rehearsal and retained
 old container. Its artifact admission and runtime contract were designed for the

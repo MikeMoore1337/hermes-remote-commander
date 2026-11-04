@@ -2,7 +2,7 @@
  * Binary file handler
  * Handles binary files that aren't supported by other handlers (Excel, Image)
  * Uses isBinaryFile for content-based detection
- * Returns instructions to use start_process with appropriate tools
+ * Reports unsupported binary reads as an error with guidance for safe tools
  */
 
 import fs from "fs/promises";
@@ -31,15 +31,9 @@ export class BinaryFileHandler implements FileHandler {
     }
 
     async read(filePath: string, options?: ReadOptions): Promise<FileResult> {
-        const instructions = this.getBinaryInstructions(filePath);
-
-        return {
-            content: instructions,
-            mimeType: 'text/plain',
-            metadata: {
-                isBinary: true
-            }
-        };
+        // Unsupported binary content must be surfaced as an MCP error, not
+        // silently returned as a successful text file.
+        throw new Error(this.getBinaryInstructions(filePath));
     }
 
     async write(path: string, content: any): Promise<void> {

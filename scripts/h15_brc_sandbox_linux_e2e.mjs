@@ -37,6 +37,37 @@ assert(allowed.isError !== true &&
        fs.readFileSync('/workspace/allowed.txt', 'utf8').includes('approved-workspace-data'),
        'MCP_WORKSPACE_WRITE');
 
+const binaryPath = '/workspace/unsupported-binary.bin';
+fs.writeFileSync(binaryPath, Buffer.from([0, 255, 0, 17, 0, 128, 4, 0]));
+const unsupportedBinary = await callTool('read_file', {path: binaryPath});
+const unsupportedText = unsupportedBinary.content.map(item => item.text || '').join('\n');
+assert(unsupportedBinary.isError === true &&
+       unsupportedText.includes('Cannot read binary file as text: unsupported-binary.bin'),
+       'MCP_BINARY_READ_IS_ERROR');
+
+const mixed = await callTool('read_multiple_files', {
+  paths: ['/workspace/allowed.txt', binaryPath],
+});
+const mixedText = mixed.content.map(item => item.text || '').join('\n');
+assert(mixed.isError === true && mixedText.includes('approved-workspace-data') &&
+       mixedText.includes('unsupported-binary.bin: Error - Cannot read binary file as text:'),
+       'MCP_MIXED_READ_REPORTS_ERROR_WITH_SUCCESSFUL_CONTENT');
+
+const cleanBatch = await callTool('read_multiple_files', {paths: ['/workspace/allowed.txt']});
+assert(cleanBatch.isError !== true && cleanBatch.content.some(item =>
+       item.text?.includes('approved-workspace-data')),
+       'MCP_TEXT_ONLY_BATCH_UNCHANGED');
+
+const imagePath = '/workspace/supported-image.png';
+fs.writeFileSync(imagePath, Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9oQ0WQAAAABJRU5ErkJggg==',
+  'base64'
+));
+const imageRead = await callTool('read_file', {path: imagePath});
+assert(imageRead.isError !== true && imageRead.content.some(item =>
+       item.type === 'image' && item.mimeType === 'image/png'),
+       'MCP_IMAGE_READ_UNCHANGED');
+
 // The filesystem may use epoch zero when birthtime is unavailable. Exercise
 // the real dispatcher/formatter with controlled stats, not host metadata.
 const metadataPath = '/workspace/birthtime-fixture.txt';
