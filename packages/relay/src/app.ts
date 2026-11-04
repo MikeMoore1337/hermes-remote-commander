@@ -228,15 +228,23 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     if (row.expires_at < Date.now()) { store.deleteDeviceCode(row.device_code); return res.status(400).json({ error: 'expired_token' }); }
     if (row.denied) { store.deleteDeviceCode(row.device_code); return res.status(400).json({ error: 'access_denied' }); }
     if (!row.approved || !row.user_id) return res.status(400).json({ error: 'authorization_pending', interval: DEVICE_POLL_INTERVAL_S });
+    // A repair approval may be bound to one device. An agent cannot redirect
+    // that approval by polling with another device_id, even when it is new.
+    if (row.device_id && device_id && device_id !== row.device_id) {
+      return res.status(409).json({ error: 'device_id_conflict' });
+    }
     const deviceId = device_id || row.device_id || `dev_${row.user_code.replace('-', '').toLowerCase()}`;
     const previousGrant = store.getDevice(deviceId);
     // Pairing may rotate a device for its owner, never steal another owner's ID.
-    if (previousGrant && previousGrant.user_id !== row.user_id) {
+    // Approval of a new pairing code does not authorize silently replacing
+    // another device owned by the same account. Explicit repair requires the
+    // approved pairing record to bind the exact existing device ID.
+    if (previousGrant && (previousGrant.user_id !== row.user_id || row.device_id !== deviceId)) {
       return res.status(409).json({ error: 'device_id_conflict' });
     }
     const token = store.issueDeviceToken(deviceId, row.user_id, name || row.client_name, platform ?? null);
     // Retire the previous connection after rotating its credential.
-    hub.get(deviceId)?.socket.close(4401, 'device credential rotated');
+    hub.disconnect(deviceId, 'device credential rotated');
     store.deleteDeviceCode(row.device_code);
     log('info', `device paired: ${name || row.client_name} [${deviceId}] for user ${row.user_id}`);
     res.json({ device_token: token, device_id: deviceId, token_type: 'bearer', ws_url: cfg.publicUrl.replace(/^http/, 'ws') + '/ws' });
@@ -312,7 +320,7 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
       case 'rename': store.renameDevice(dev.device_id, String(name ?? '').trim().slice(0, 80) || dev.name); break;
       case 'pause': store.setDevicePaused(dev.device_id, true); break;
       case 'resume': store.setDevicePaused(dev.device_id, false); break;
-      case 'delete': store.deleteDevice(dev.device_id); hub.get(dev.device_id)?.socket.close(4401, 'device removed'); break;
+      case 'delete': store.deleteDevice(dev.device_id); hub.disconnect(dev.device_id, 'device removed'); break;
     }
     log('info', `admin: ${action} device ${dev.device_id}`);
     res.redirect('/admin');
@@ -354,7 +362,10 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
       Object.defineProperty(ws, 'hermesAuthTokenHash', {
         value: dev.token_hash, writable: false, configurable: false, enumerable: false,
       });
-      hub.attach(ws, dev.user_id, dev.device_id);
+      hub.attach(ws, dev.user_id, dev.device_id, () => {
+        const current = store.getDevice(dev.device_id);
+        return current?.user_id === dev.user_id && current.token_hash === dev.token_hash;
+      });
       store.touchDevice(dev.device_id);
     });
   });

@@ -35,7 +35,7 @@ export const LIST_DEVICES_TOOL = {
 
 /** Live tool set for a user: union across online, non-paused devices (with deviceId prop). */
 export function liveTools(hub: DeviceHub, store: SqliteStore, userId: string) {
-  const online = hub.list(userId).filter((d) => !store.getDevice(d.deviceId)?.paused);
+  const online = hub.list(userId).filter((d) => deviceGrantStatus(hub, store, userId, d.deviceId) === 'ready');
   const merged = new Map<string, { name: string; description: string; inputSchema: unknown; annotations?: Record<string, unknown> }>();
   for (const d of online) for (const t of hub.get(d.deviceId)?.tools ?? []) if (isPermittedRemoteTool(t.name, {}) && !merged.has(t.name)) merged.set(t.name, { ...t, inputSchema: withDeviceId(t.inputSchema) });
   return { online: online.length, tools: [...merged.values()] };

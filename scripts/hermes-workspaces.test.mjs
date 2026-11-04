@@ -90,3 +90,24 @@ test('a device that disappears during authorization is not dispatched', async ()
   assert.equal(result.status, 404);
   assert.equal(dispatched, false);
 });
+
+test('an explicit invalid device ID never falls back to the only device', async () => {
+  const device = {ownerId:'owner',info:{name:'fixture'},socket:{hermesAuthTokenHash:'hash'}};
+  let dispatched = 0;
+  const hub = {resolveDefault:() => 'device-001',get:() => device,
+    call:async () => { dispatched++; return {content:[{type:'text',text:'ok'}]}; }};
+  const store = {getDevice:() => ({user_id:'owner',token_hash:'hash',paused:false}),audit:()=>{},touchDevice:()=>{}};
+  for (const deviceId of ['', null, false, 0, {}, []]) {
+    const result = await invokeTool(hub, store, {userId:'owner',clientId:'fixture'}, 'write_file', {deviceId});
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.message, 'HERMES_INVALID_DEVICE_ID');
+    assert.equal(dispatched, 0);
+  }
+  const implicit = await invokeTool(hub, store, {userId:'owner',clientId:'fixture'}, 'write_file', {});
+  assert.equal(implicit.ok, true);
+  assert.equal(dispatched, 1);
+  const explicit = await invokeTool(hub, store, {userId:'owner',clientId:'fixture'}, 'write_file', {deviceId:'device-001'});
+  assert.equal(explicit.ok, true);
+  assert.equal(dispatched, 2);
+});

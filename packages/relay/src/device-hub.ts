@@ -49,7 +49,7 @@ export class DeviceHub {
   }
 
   /** Attach an authenticated socket; the agent must send `hello` as its first frame. */
-  attach(socket: WebSocket, ownerId: string, expectedDeviceId?: string): void {
+  attach(socket: WebSocket, ownerId: string, expectedDeviceId?: string, isCurrentGrant?: () => boolean): void {
     let deviceId: string | null = null;
 
     socket.on('message', (raw) => {
@@ -63,6 +63,19 @@ export class DeviceHub {
         if (msg.protocol !== BRC_PROTOCOL_VERSION) {
           this.sendTo(socket, { type: 'error', code: 'PROTOCOL_MISMATCH', message: `relay speaks v${BRC_PROTOCOL_VERSION}`, fatal: true });
           return socket.close(1002, 'protocol mismatch');
+        }
+        // A socket authenticated before rotation can delay its hello until afterward.
+        try {
+          // shortcut: callers without a grant callback must handle revocation themselves; supply one when grants can change.
+          if (isCurrentGrant && !isCurrentGrant()) return socket.close(4401, 'device credential revoked');
+        } catch {
+          return socket.close(1011, 'device authorization unavailable');
+        }
+        if (!msg.device || typeof msg.device !== 'object' ||
+            [msg.device.deviceId, msg.device.name, msg.device.platform, msg.device.arch,
+              msg.device.hostname, msg.device.agentVersion, msg.device.coreVersion].some((value) => typeof value !== 'string') ||
+            !Array.isArray(msg.tools) || msg.tools.some((tool) => !tool || typeof tool !== 'object' || typeof tool.name !== 'string')) {
+          return socket.close(1002, 'invalid hello');
         }
         if (expectedDeviceId && msg.device.deviceId !== expectedDeviceId) {
           this.sendTo(socket, { type: 'error', code: 'DEVICE_ID_MISMATCH', message: 'hello.deviceId does not match the paired device token', fatal: true });
@@ -87,6 +100,15 @@ export class DeviceHub {
       // No superseded/foreign socket can update activity or complete a
       // pending command, even when it knows a previously issued call ID.
       if (!dev || dev.socket !== socket) return;
+      try {
+        if (isCurrentGrant && !isCurrentGrant()) {
+          this.disconnect(deviceId, 'device credential revoked');
+          return;
+        }
+      } catch {
+        this.disconnect(deviceId, 'device authorization unavailable', 1011);
+        return;
+      }
       dev.lastSeen = Date.now();
 
       if (msg.type === 'pong') return;
@@ -111,7 +133,7 @@ export class DeviceHub {
 
   /** Route a tool call to a device. Throws if offline or timed out. */
   call(deviceId: string, tool: string, args: Record<string, unknown>, opts: { client?: { name?: string; version?: string }; timeoutMs?: number } = {}): Promise<ToolResult> {
-    const dev = this.devices.get(deviceId);
+    const dev = this.get(deviceId);
     if (!dev) return Promise.reject(new Error(`DEVICE_OFFLINE: ${deviceId}`));
     if (!dev.tools.some((t) => t.name === tool)) return Promise.reject(new Error(`UNKNOWN_TOOL: ${tool}`));
     const id = randomUUID();
@@ -128,14 +150,25 @@ export class DeviceHub {
 
   list(ownerId?: string): DeviceSummary[] {
     return [...this.devices.values()]
-      .filter((d) => !ownerId || d.ownerId === ownerId)
+      .filter((d) => d.socket.readyState === d.socket.OPEN && (!ownerId || d.ownerId === ownerId))
       .map((d) => ({
         deviceId: d.info.deviceId, name: d.info.name, platform: d.info.platform, hostname: d.info.hostname,
         agentVersion: d.info.agentVersion, online: true, lastSeen: d.lastSeen, toolCount: d.tools.length,
       }));
   }
 
-  get(deviceId: string): ConnectedDevice | undefined { return this.devices.get(deviceId); }
+  get(deviceId: string): ConnectedDevice | undefined {
+    const dev = this.devices.get(deviceId);
+    return dev && dev.socket.readyState === dev.socket.OPEN ? dev : undefined;
+  }
+
+  disconnect(deviceId: string, reason: string, code = 4401): void {
+    const dev = this.devices.get(deviceId);
+    if (!dev) return;
+    this.devices.delete(deviceId);
+    this.rejectPending(deviceId, dev.socket, 'DEVICE_DISCONNECTED');
+    dev.socket.close(code, reason);
+  }
 
   /** Single online device for an owner, or null when 0 or >1 (caller must ask for deviceId). */
   resolveDefault(ownerId?: string): string | null {

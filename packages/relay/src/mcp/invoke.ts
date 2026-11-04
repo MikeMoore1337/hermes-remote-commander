@@ -25,10 +25,12 @@ export function deviceGrantStatus(hub: DeviceHub, store: SqliteStore, userId: st
 }
 
 export function listUserDevices(hub: DeviceHub, store: SqliteStore, userId: string) {
-  const online = new Set(hub.list(userId).map((d) => d.deviceId));
-  return store.listDevices(userId).map((d) => ({
-    deviceId: d.device_id, name: d.name, platform: d.platform, online: online.has(d.device_id), paused: !!d.paused, lastSeen: d.last_seen,
-  }));
+  return store.listDevices(userId).map((d) => {
+    const dev = hub.get(d.device_id);
+    const online = !!dev && dev.ownerId === userId &&
+      (dev.socket as typeof dev.socket & { hermesAuthTokenHash?: string }).hermesAuthTokenHash === d.token_hash;
+    return { deviceId: d.device_id, name: d.name, platform: d.platform, online, paused: !!d.paused, lastSeen: d.last_seen };
+  });
 }
 
 export async function invokeTool(
@@ -38,6 +40,9 @@ export async function invokeTool(
   const args = { ...(rawArgs ?? {}) };
   if (!isPermittedRemoteTool(tool, args)) {
     return { ok: false, status: 403, message: 'HERMES_REMOTE_TOOL_DENIED' };
+  }
+  if (Object.hasOwn(args, 'deviceId') && (typeof args.deviceId !== 'string' || !args.deviceId)) {
+    return { ok: false, status: 400, message: 'HERMES_INVALID_DEVICE_ID' };
   }
   const requested = typeof args.deviceId === 'string' && args.deviceId ? args.deviceId : undefined;
   delete args.deviceId;

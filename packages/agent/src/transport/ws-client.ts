@@ -72,7 +72,7 @@ export class WsClient {
       this.log('info', 'Connected, hello sent');
     });
 
-    ws.on('message', (data) => void this.onMessage(data as Buffer));
+    ws.on('message', (data) => void this.onMessage(data as Buffer, ws));
 
     ws.on('unexpected-response', (_req, res) => {
       if (res.statusCode === 401 || res.statusCode === 403) this.lastUnauthorized = true;
@@ -110,7 +110,8 @@ export class WsClient {
     setTimeout(() => this.connect(), wait);
   }
 
-  private async onMessage(raw: Buffer): Promise<void> {
+  private async onMessage(raw: Buffer, socket: WebSocket): Promise<void> {
+    if (socket !== this.ws) return;
     const msg = parseMessage<RelayMessage>(raw);
     if (!msg) return this.log('warn', 'Dropped malformed frame');
     switch (msg.type) {
@@ -122,7 +123,7 @@ export class WsClient {
         this.send({ type: 'pong', ts: msg.ts });
         return;
       case 'call':
-        return this.handleCall(msg);
+        return this.handleCall(msg, socket);
       case 'error':
         this.log('error', `Relay error ${msg.code}: ${msg.message}`);
         if (msg.fatal) this.stop();
@@ -130,21 +131,21 @@ export class WsClient {
     }
   }
 
-  private async handleCall(msg: CallMessage): Promise<void> {
+  private async handleCall(msg: CallMessage, socket: WebSocket): Promise<void> {
     this.log('debug', `call ${msg.id} ${msg.tool}`);
     setCurrentCallIsRemote(true);
     setCurrentRemoteClient(msg.client ?? null);
     try {
       const result = await this.opts.callTool(msg.tool, msg.args ?? {});
-      this.send({ type: 'result', id: msg.id, result: result as never });
+      this.send({ type: 'result', id: msg.id, result: result as never }, socket);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.send({ type: 'result', id: msg.id, error: { code: 'AGENT_ERROR', message } });
+      this.send({ type: 'result', id: msg.id, error: { code: 'AGENT_ERROR', message } }, socket);
     }
   }
 
-  private send(msg: AgentMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  private send(msg: AgentMessage, socket = this.ws): void {
+    if (socket && socket === this.ws && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
   }
 
   private deviceInfo(): DeviceInfo {
