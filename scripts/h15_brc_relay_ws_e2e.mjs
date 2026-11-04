@@ -163,7 +163,7 @@ try {
   const unboundBody = await unboundAttempt.json();
   if (unboundAttempt.status !== 409 || unboundBody.error !== 'device_id_conflict' ||
       relay.store.getDevice('sandbox-agent')?.token_hash !== expectedHash ||
-      relay.hub.get('sandbox-agent')?.socket !== connected) {
+      relay.hub.get('sandbox-agent') !== connected) {
     throw Error('SAME_OWNER_UNBOUND_DEVICE_ID_TAKEOVER');
   }
   console.log('WSS_SAME_OWNER_UNBOUND_REPLACEMENT=DENIED');
