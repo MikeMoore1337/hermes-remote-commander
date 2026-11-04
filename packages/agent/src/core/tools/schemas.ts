@@ -49,7 +49,7 @@ export const ForceTerminateArgsSchema = z.object({
 export const ListSessionsArgsSchema = z.object({});
 
 export const KillProcessArgsSchema = z.object({
-  pid: z.number(),
+  pid: z.number().int().min(2).max(2_147_483_647),
 });
 
 // Filesystem tools schemas

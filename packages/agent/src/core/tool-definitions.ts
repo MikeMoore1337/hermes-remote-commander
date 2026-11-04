@@ -901,9 +901,9 @@ export function buildToolDefinitions(): ToolDefinition[] {
     {
         name: "kill_process",
         description: `
-                Terminate a running process by PID.
+                Send a termination signal to a process by positive PID (2 or greater).
 
-                Use with caution as this will forcefully terminate the specified process.
+                The agent's own PID is refused. Sending a signal does not verify process exit.
 
                 ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: zodToJsonSchema(KillProcessArgsSchema),

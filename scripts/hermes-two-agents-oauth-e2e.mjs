@@ -202,6 +202,31 @@ must(terminal.isError !== true &&
      JSON.stringify(terminal).includes('hermes-two-native-ci-shell'),
      'TWO_NATIVE_REAL_SHELL_ECHO');
 
+// A rejected group PID must not kill the agent or its isolated siblings.
+const badPid = await call('kill_process', { deviceId: 'ci-native-two', pid: -1 });
+must(badPid.isError === true, 'TWO_NATIVE_GROUP_PID_REFUSED');
+const running = await call('start_process', {
+  deviceId: 'ci-native-two', timeout_ms: 1000,
+  command: `exec node -e 'setInterval(() => {}, 1000)'`,
+});
+const pidText = JSON.stringify(running).match(/Process started with PID (\d+)/)?.[1];
+const pid = Number(pidText);
+must(running.isError !== true && Number.isSafeInteger(pid) && pid > 1,
+     'TWO_NATIVE_LONG_PROCESS_STARTED');
+const signalled = await call('kill_process', { deviceId: 'ci-native-two', pid });
+must(signalled.isError !== true && JSON.stringify(signalled).includes('signal sent'),
+     'TWO_NATIVE_PROCESS_SIGNAL_SENT');
+let exited = false;
+for (let attempt = 0; attempt < 20 && !exited; attempt++) {
+  const check = await call('start_process', {
+    deviceId: 'ci-native-two', timeout_ms: 1000,
+    command: `if kill -0 ${pid} 2>/dev/null; then echo PID_STILL_RUNNING; else echo PID_EXITED; fi`,
+  });
+  exited = check.isError !== true && JSON.stringify(check).includes('PID_EXITED');
+  if (!exited) await new Promise(resolve => setTimeout(resolve, 100));
+}
+must(exited, 'TWO_NATIVE_PROCESS_EXIT_OBSERVED');
+
 const development = await call('start_process', {
   deviceId: 'ci-native-two', timeout_ms: 10000,
   command: "mkdir -p /workspace/git-fixture && printf fixture > /workspace/git-fixture/fixture.txt && git -C /workspace/git-fixture init -q -b fixture && git -C /workspace/git-fixture add fixture.txt && git -C /workspace/git-fixture -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture && test -z \"$(git -C /workspace/git-fixture status --porcelain)\" && git -C /workspace/git-fixture rev-parse --abbrev-ref HEAD && python3 -c 'print(\"python-ok\")'",
