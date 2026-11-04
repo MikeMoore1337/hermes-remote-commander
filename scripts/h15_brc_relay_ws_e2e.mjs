@@ -168,6 +168,30 @@ try {
   }
   console.log('WSS_SAME_OWNER_UNBOUND_REPLACEMENT=DENIED');
 
+  // A pre-bound repair approval may be used only for its exact approved ID.
+  // A polling agent must not substitute either another existing identity or
+  // an unrelated new one to consume that approval.
+  for (const approvedId of ['sandbox-agent', 'prebound-new-device']) {
+    const repair = relay.store.createDeviceCode('bound-repair', 60000);
+    relay.store.approveDeviceCode(repair.device_code, user.id, approvedId);
+    const substituted = await fetch('http://127.0.0.1:' + addr.port + '/device/poll', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        device_code: repair.device_code,
+        device_id: 'unapproved-substitute', name: 'unapproved-substitute', platform: 'linux',
+      }),
+    });
+    const body = await substituted.json();
+    if (substituted.status !== 409 || body.error !== 'device_id_conflict' ||
+        relay.store.getDevice('unapproved-substitute') ||
+        relay.store.getDevice(approvedId)?.token_hash !==
+          (approvedId === 'sandbox-agent' ? expectedHash : undefined) ||
+        relay.hub.get('sandbox-agent') !== connected) {
+      throw Error('PREBOUND_DEVICE_ID_SUBSTITUTION_ACCEPTED');
+    }
+  }
+  console.log('WSS_PREBOUND_REPAIR_DEVICE_ID_SUBSTITUTION=DENIED');
+
   const ctx = {userId:user.id,clientId:'synthetic-only'};
   const args = {deviceId:'sandbox-agent',path:'/workspace/synthetic.txt'};
   const newToken = relay.store.issueDeviceToken('sandbox-agent',user.id,'sandbox-agent','linux');
