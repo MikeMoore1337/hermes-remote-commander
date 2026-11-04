@@ -9,10 +9,6 @@ import { CONFIG_FILE } from '../../config.js';
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
 
-// Cached Chrome path to avoid repeated lookups
-let cachedChromePath: string | undefined | null = null; // null = not checked yet
-let chromeCheckPromise: Promise<string | undefined> | null = null;
-
 interface CachedPuppeteerChrome {
     executablePath: string;
 }
@@ -142,9 +138,10 @@ function findSystemChrome(): string | undefined {
         ? [
             'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-            `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
             'C:\\Program Files\\Chromium\\Application\\chrome.exe',
             'C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe',
+            'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
         ]
         : process.platform === 'darwin'
         ? [
@@ -164,99 +161,9 @@ function findSystemChrome(): string | undefined {
     return paths.find(p => existsSync(p));
 }
 
-/**
- * Download and install Chrome using @puppeteer/browsers
- * Returns the executable path after installation
- */
-async function installChrome(): Promise<CachedPuppeteerChrome> {
-    // Dynamic import to avoid loading if not needed
-    const { install, Browser, detectBrowserPlatform, resolveBuildId } = await import('@puppeteer/browsers' as string);
-    
-    const cacheDir = getPuppeteerCacheDir();
-    const platform = detectBrowserPlatform()!;
-    const buildId = await resolveBuildId(Browser.CHROME, platform, 'stable');
-    
-    console.error('Downloading Chrome for PDF generation (this may take a few minutes)...');
-    await fs.mkdir(cacheDir, { recursive: true });
-
-    const installedBrowser = await install({
-        browser: Browser.CHROME,
-        buildId,
-        cacheDir,
-        downloadProgressCallback: (downloadedBytes: number, totalBytes: number) => {
-            const percent = Math.round((downloadedBytes / totalBytes) * 100);
-            process.stderr.write(`\rDownloading Chrome: ${percent}%`);
-        },
-    });
-    
-    console.error('\nChrome download complete.');
-    
-    return {
-        executablePath: installedBrowser.executablePath,
-    };
-}
-
-/**
- * Find or install Chrome for PDF generation
- * Priority: 1. Puppeteer cache, 2. System Chrome, 3. Install Chrome
- * Results are cached to avoid repeated lookups
- */
-async function getChromePath(): Promise<string | undefined> {
-    // Return cached result if available
-    if (cachedChromePath !== null) {
-        return cachedChromePath;
-    }
-    
-    // If a check is already in progress, wait for it
-    if (chromeCheckPromise) {
-        return chromeCheckPromise;
-    }
-    
-    // Start the check
-    chromeCheckPromise = (async () => {
-        // 1. Check puppeteer cache first (exact compatible version)
-        const cachedChrome = findPuppeteerChrome();
-        if (cachedChrome) {
-            await pruneOldPuppeteerChromeBuilds(cachedChrome.executablePath);
-            cachedChromePath = cachedChrome.executablePath;
-            return cachedChrome.executablePath;
-        }
-        
-        // 2. Check system Chrome
-        const systemChrome = findSystemChrome();
-        if (systemChrome) {
-            cachedChromePath = systemChrome;
-            return systemChrome;
-        }
-        
-        // 3. Install Chrome as last resort
-        try {
-            const installedChrome = await installChrome();
-            await pruneOldPuppeteerChromeBuilds(installedChrome.executablePath);
-            cachedChromePath = installedChrome.executablePath;
-            return installedChrome.executablePath;
-        } catch (error) {
-            console.error('Failed to install Chrome:', error);
-            cachedChromePath = undefined;
-            return undefined;
-        }
-    })();
-    
-    const result = await chromeCheckPromise;
-    chromeCheckPromise = null;
-    return result;
-}
-
-/**
- * Preemptively ensure Chrome is available for PDF generation.
- * Call this at server startup to trigger download in background if needed.
- * Returns immediately, download happens in background.
- */
+/** Check installed system browser paths without downloading or deleting files. */
 export function ensureChromeAvailable(): void {
-    // Don't await - let it run in background
-    getChromePath().catch((error) => {
-        console.error('Background Chrome check failed:', error);
-    });
+    findSystemChrome();
 }
 
 async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
@@ -285,19 +192,17 @@ export async function parsePdfToMarkdown(source: string, pageNumbers: number[] |
 }
 
 export async function parseMarkdownToPdf(markdown: string, options: any = {}): Promise<Buffer> {
+    // An agent-writable browser cache is not an executable trust boundary.
+    const chromePath = findSystemChrome();
+    if (!chromePath) throw new Error('HERMES_BROWSER_UNAVAILABLE: an approved system Chrome, Chromium or Edge is required');
     try {
-        // Find Chrome: puppeteer cache -> system Chrome -> install
-        const chromePath = await getChromePath();
-        
-        if (chromePath) {
-            options = {
-                ...options,
-                launch_options: {
-                    ...options.launch_options,
-                    executablePath: chromePath,
-                }
-            };
-        }
+        options = {
+            ...options,
+            launch_options: {
+                ...options.launch_options,
+                executablePath: chromePath,
+            }
+        };
         
         const pdf = await mdToPdf({ content: markdown }, options);
 
