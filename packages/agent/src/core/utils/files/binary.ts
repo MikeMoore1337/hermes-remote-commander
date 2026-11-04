@@ -31,15 +31,9 @@ export class BinaryFileHandler implements FileHandler {
     }
 
     async read(filePath: string, options?: ReadOptions): Promise<FileResult> {
-        const instructions = this.getBinaryInstructions(filePath);
-
-        return {
-            content: instructions,
-            mimeType: 'text/plain',
-            metadata: {
-                isBinary: true
-            }
-        };
+        // Unsupported binary content must be surfaced as an MCP error, not
+        // silently returned as a successful text file.
+        throw new Error(this.getBinaryInstructions(filePath));
     }
 
     async write(path: string, content: any): Promise<void> {
