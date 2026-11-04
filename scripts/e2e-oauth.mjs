@@ -81,8 +81,25 @@ step('mcp refuses invalid explicit device ID', invalidDevice.body?.result?.isErr
   invalidDevice.body?.result?.content?.[0]?.text === 'HERMES_INVALID_DEVICE_ID');
 
 const call = await rpc('tools/call', { name: 'start_process', arguments: { command: 'echo brc-mcp-ok', timeout_ms: 8000 } }, 4);
-const out = call.body?.result?.content?.[0]?.text ?? '';
-step('mcp start_process via device', out.includes('brc-mcp-ok'), `isError=${call.body?.result?.isError} device=${call.body?.result?._meta?.deviceName}`);
+let out = call.body?.result?.content?.[0]?.text ?? '';
+// start_process may return an active session before its stdout arrives,
+// especially on Windows runners. Exercise the documented follow-up tool
+// instead of assuming the initial output contains the entire command result.
+let followedUp = false;
+if (call.body?.result?.isError !== true && !out.includes('brc-mcp-ok')) {
+  const pidText = out.match(/Process started with PID (\d+)/)?.[1];
+  if (pidText) {
+    const read = await rpc('tools/call', {
+      name: 'read_process_output',
+      arguments: { pid: Number(pidText), timeout_ms: 3000 },
+    }, 22);
+    followedUp = true;
+    out += '\n' + (read.body?.result?.content?.[0]?.text ?? '');
+  }
+}
+step('mcp start_process via device',
+  call.body?.result?.isError !== true && out.includes('brc-mcp-ok'),
+  `isError=${call.body?.result?.isError} followUp=${followedUp} device=${call.body?.result?._meta?.deviceName}`);
 
 // 8. unauthorized / refresh
 const bad = await fetch(`${base}/mcp`, { method: 'POST', headers: { ...H, authorization: 'Bearer nope' }, body: '{}' });
