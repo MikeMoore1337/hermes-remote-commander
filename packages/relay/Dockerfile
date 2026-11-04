@@ -23,7 +23,9 @@ RUN addgroup -S rdp && adduser -S rdp -G rdp && mkdir -p /data && chown rdp:rdp 
 WORKDIR /app
 COPY --from=build --chown=rdp:rdp /out .
 USER rdp
-VOLUME ["/data"]
+# Persistence requires an explicit operator-managed /data volume or bind mount.
+# Do not create an untracked anonymous writable volume on --read-only relays.
+# docker-compose.yml already mounts relay-data:/data.
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1
