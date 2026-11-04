@@ -6,10 +6,12 @@ processes (24 tools, same tool set as Desktop Commander) to any AI client author
 
 ## Install
 
-```bash
-npm i -g brc-agent
-```
+This Hermes fork is a development candidate. The public `brc-agent` npm package
+is upstream and does not contain the fork changes. Build from the [fork source](https://github.com/MikeMoore1337/hermes-remote-commander)
+only within an approved isolated environment; publication and activation require separate approval.
 Requires Node.js 22.13+ (Windows, macOS, Linux).
+
+See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for attribution and third-party license information.
 
 ## Pair with your relay
 
@@ -41,6 +43,6 @@ brc-agent --uninstall-service
 ## Docs
 
 Full project, relay setup (Docker, Cloudflare Tunnel, VPS) and security notes:
-https://github.com/shahidx0x/better-remote-commander
+https://github.com/MikeMoore1337/hermes-remote-commander
 
 License MIT. Tool core derived from [Desktop Commander MCP](https://github.com/wonderwhy-er/DesktopCommanderMCP) (MIT).

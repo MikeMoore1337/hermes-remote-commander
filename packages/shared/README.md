@@ -1,5 +1,6 @@
 # brc-shared
 
-Wire protocol and shared types for **Better Remote Commander** (`brc-agent` ? `brc-relay`). Internal dependency; you do not need to install it directly.
+Wire protocol and shared types for Better Remote Commander (`brc-agent` and
+`brc-relay`). This is an internal dependency; do not install it directly.
 
-Project: https://github.com/shahidx0x/better-remote-commander · License MIT.
+Project: https://github.com/MikeMoore1337/hermes-remote-commander Â· License MIT.
