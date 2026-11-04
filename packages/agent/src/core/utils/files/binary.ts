@@ -2,7 +2,7 @@
  * Binary file handler
  * Handles binary files that aren't supported by other handlers (Excel, Image)
  * Uses isBinaryFile for content-based detection
- * Returns instructions to use start_process with appropriate tools
+ * Reports unsupported binary reads as an error with guidance for safe tools
  */
 
 import fs from "fs/promises";
