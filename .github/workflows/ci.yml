@@ -68,6 +68,8 @@ jobs:
       - name: Verify standalone relay includes the pinned agent schemas
         run: |
           docker run --rm --network none --entrypoint node brc/relay:ci --input-type=module -e "import('./dist/mcp/hermes-tool-catalog.js').then(({pinnedToolCatalog}) => { if (!pinnedToolCatalog().some(t => t.name === 'read_file')) process.exit(1); })"
+      - name: Verify fork relay under legacy-style UID and SQLite state mount (synthetic)
+        run: bash scripts/h454_fork_legacy_state_smoke.sh brc/relay:ci
       - name: Exercise OAuth MCP with two isolated agent containers
         run: bash scripts/hermes-two-agents-docker-e2e.sh brc/relay:ci brc/agent:ci
       - name: smoke relay image
