@@ -8,7 +8,9 @@
 
 x-relay: &relay
   build: { context: ., dockerfile: packages/relay/Dockerfile }
-  image: ghcr.io/shahidx0x/better-remote-commander/relay:${RELAY_TAG:-latest}
+  # Never pull the upstream relay: this fork must build its own reviewed source.
+  image: hermes-remote-commander/relay:${RELAY_TAG:-local}
+  pull_policy: build
   restart: unless-stopped
   environment:
     PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
