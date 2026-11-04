@@ -228,6 +228,11 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     if (row.expires_at < Date.now()) { store.deleteDeviceCode(row.device_code); return res.status(400).json({ error: 'expired_token' }); }
     if (row.denied) { store.deleteDeviceCode(row.device_code); return res.status(400).json({ error: 'access_denied' }); }
     if (!row.approved || !row.user_id) return res.status(400).json({ error: 'authorization_pending', interval: DEVICE_POLL_INTERVAL_S });
+    // A repair approval may be bound to one device. An agent cannot redirect
+    // that approval by polling with another device_id, even when it is new.
+    if (row.device_id && device_id && device_id !== row.device_id) {
+      return res.status(409).json({ error: 'device_id_conflict' });
+    }
     const deviceId = device_id || row.device_id || `dev_${row.user_code.replace('-', '').toLowerCase()}`;
     const previousGrant = store.getDevice(deviceId);
     // Pairing may rotate a device for its owner, never steal another owner's ID.
