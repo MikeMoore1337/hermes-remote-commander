@@ -29,9 +29,11 @@ relay="$(docker run -d --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --pids-limit 128 --memory 512m \
   --tmpfs /tmp:rw,nosuid,nodev,size=64m \
   -e HOST=127.0.0.1 -e PUBLIC_URL=http://localhost:3000 -e BRC_DB=/tmp/relay.sqlite \
+  -e BRC_WORKSPACE_REGISTRY=/tmp/workspaces.json \
   -e BRC_ADMIN_USER=ci-owner -e BRC_ADMIN_PASSWORD=synthetic-only-password \
   -e BRC_SESSION_SECRET=synthetic-only-session-secret \
-  --mount "type=bind,src=$scripts,dst=/fixtures,readonly" "$image")"
+  --mount "type=bind,src=$scripts,dst=/fixtures,readonly" --entrypoint sh "$image" \
+  -c 'cp /fixtures/hermes-workspaces-fixture.json /tmp/workspaces.json && chmod 600 /tmp/workspaces.json && exec node dist/cli.js')"
 ready=false
 for _ in $(seq 1 30); do
   if docker exec "$relay" node -e "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
@@ -50,9 +52,9 @@ start_agent() {
     --pids-limit 128 --memory 512m --tmpfs /tmp:rw,nosuid,nodev,size=64m \
     --tmpfs "/workspace:rw,nosuid,nodev,uid=$uid,gid=$gid,mode=0700,size=64m" \
     -e BRC_HOME=/tmp/brc-home -e BRC_RELAY=http://localhost:3000 -e BRC_TOKEN="$2" \
-    -e BRC_DEVICE_ID="$1" -e BRC_NAME="$1" -e FIXTURE_CONTENT="$3" \
-    --entrypoint sh "$agent_image" -c 'printf "%s\n" "$FIXTURE_CONTENT" > /workspace/identity.txt; exec node /app/dist/cli.js --allow-dir /workspace --no-browser'
+    -e BRC_DEVICE_ID="$1" -e BRC_NAME="$1" -e FIXTURE_CONTENT="$3" -e FIXTURE_PROJECT="$4" \
+    --entrypoint sh "$agent_image" -c 'mkdir -p "/workspace/projects/$FIXTURE_PROJECT"; printf "%s\n" "$FIXTURE_CONTENT" > /workspace/identity.txt; cp /workspace/identity.txt "/workspace/projects/$FIXTURE_PROJECT/identity.txt"; exec node /app/dist/cli.js --allow-dir /workspace --no-browser'
 }
-agent_one="$(start_agent ci-native-one "$token_one" real-ci-agent-one)"
-agent_two="$(start_agent ci-native-two "$token_two" real-ci-agent-two)"
+agent_one="$(start_agent ci-native-one "$token_one" real-ci-agent-one alpha)"
+agent_two="$(start_agent ci-native-two "$token_two" real-ci-agent-two beta)"
 docker exec "$relay" node /fixtures/hermes-two-agents-oauth-e2e.mjs

@@ -22,6 +22,7 @@ import { SqliteStore, verifyPassword } from './store/sqlite.js';
 import { RelayOAuthProvider, SCOPES } from './auth/provider.js';
 import { Sessions } from './auth/sessions.js';
 import { createMcpServer } from './mcp/server.js';
+import { loadWorkspaceRegistry } from './mcp/hermes-workspaces.js';
 import * as pages from './pages/html.js';
 import * as adminPages from './pages/admin.js';
 import { LoginLimiter } from './auth/rate-limit.js';
@@ -36,6 +37,7 @@ export interface RelayConfig {
   adminUser: string;
   adminPassword: string;
   relayVersion: string;
+  workspaceRegistryPath?: string;
 }
 
 export function loadConfig(): RelayConfig {
@@ -51,6 +53,7 @@ export function loadConfig(): RelayConfig {
     adminUser: env.BRC_ADMIN_USER ?? 'admin',
     adminPassword: env.BRC_ADMIN_PASSWORD ?? '',
     relayVersion: '2.0.2',
+    workspaceRegistryPath: env.BRC_WORKSPACE_REGISTRY,
   };
 }
 
@@ -75,6 +78,7 @@ function withinMcpElementLimit(body: unknown): boolean {
 export interface Relay { http: HttpServer; hub: DeviceHub; store: SqliteStore; close(): Promise<void> }
 
 export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) => void): Relay {
+  const workspaces = loadWorkspaceRegistry(cfg.workspaceRegistryPath);
   const store = new SqliteStore(cfg.dbFile);
   const admin = store.upsertUser(cfg.adminUser, cfg.adminPassword);
   const sessions = new Sessions(cfg.sessionSecret, cfg.publicUrl.startsWith('https://'));
@@ -283,7 +287,7 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     if (!withinMcpElementLimit(req.body)) {
       return res.status(413).json({ jsonrpc: '2.0', error: { code: -32600, message: 'MCP request has too many elements' }, id: null });
     }
-    const server = createMcpServer(hub, store, { userId, clientId: auth.clientId }, cfg.relayVersion);
+    const server = createMcpServer(hub, store, { userId, clientId: auth.clientId }, cfg.relayVersion, workspaces);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { void transport.close(); void server.close(); });
     try {

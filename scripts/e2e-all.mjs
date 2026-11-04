@@ -33,7 +33,7 @@ async function waitFor(fn, timeoutMs, what) {
 
 let failed = 0;
 try {
-  start('relay', [relayCli], { PORT: String(PORT), PUBLIC_URL: base, BRC_ADMIN_PASSWORD: pass, BRC_SESSION_SECRET: 'e2e', BRC_DB: path.join(scratch, 'relay.sqlite'), LOG_LEVEL: 'warn' });
+  start('relay', [relayCli], { PORT: String(PORT), PUBLIC_URL: base, BRC_ADMIN_PASSWORD: pass, BRC_SESSION_SECRET: 'e2e', BRC_DB: path.join(scratch, 'relay.sqlite'), BRC_WORKSPACE_REGISTRY: '', LOG_LEVEL: 'warn' });
   await waitFor(async () => (await fetch(`${base}/health`)).ok, 20_000, 'relay');
 
   const agent = start('agent', [agentCli, '--relay', base, '--name', 'e2e-agent', '--no-browser'], { BRC_HOME: path.join(scratch, 'agent-home') });

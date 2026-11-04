@@ -1,0 +1,7 @@
+{
+  "schema": 2,
+  "workspaces": [
+    { "name": "alpha", "aliases": ["first project"], "deviceId": "ci-native-one", "root": "/workspace/projects/alpha", "origin": "https://github.com/example/alpha.git", "branch": "main", "scope": "sandbox" },
+    { "name": "beta", "aliases": ["second project"], "deviceId": "ci-native-two", "root": "/workspace/projects/beta", "origin": "https://github.com/example/beta.git", "branch": "main", "scope": "sandbox" }
+  ]
+}

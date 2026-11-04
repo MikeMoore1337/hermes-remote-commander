@@ -6,6 +6,7 @@ import { isPermittedRemoteTool } from './hermes-policy.js';
 import type { DeviceHub } from '../device-hub.js';
 import type { SqliteStore } from '../store/sqlite.js';
 import type { ToolResult } from 'brc-shared';
+import type { DeviceState } from './hermes-workspaces.js';
 
 export interface InvokeContext { userId: string; clientId: string }
 export type InvokeOutcome =
@@ -13,6 +14,15 @@ export type InvokeOutcome =
   | { ok: false; status: number; message: string };
 
 const argsHash = (args: unknown) => createHash('sha256').update(JSON.stringify(args ?? {})).digest('hex').slice(0, 16);
+
+export function deviceGrantStatus(hub: DeviceHub, store: SqliteStore, userId: string, deviceId: string): DeviceState {
+  const grant = store.getDevice(deviceId);
+  if (!grant || grant.user_id !== userId) return 'foreign';
+  const dev = hub.get(deviceId);
+  if (!dev || dev.ownerId !== userId) return grant.paused ? 'paused' : 'offline';
+  if ((dev.socket as typeof dev.socket & { hermesAuthTokenHash?: string }).hermesAuthTokenHash !== grant.token_hash) return 'revoked';
+  return grant.paused ? 'paused' : 'ready';
+}
 
 export function listUserDevices(hub: DeviceHub, store: SqliteStore, userId: string) {
   const online = new Set(hub.list(userId).map((d) => d.deviceId));
@@ -38,12 +48,12 @@ export async function invokeTool(
   }
   const dev = hub.get(deviceId);
   if (!dev || dev.ownerId !== ctx.userId) return { ok: false, status: 404, message: `Device ${deviceId} is not online or not yours.` };
-  const grant = store.getDevice(deviceId);
-  if (!grant || grant.user_id !== ctx.userId ||
-      (dev.socket as typeof dev.socket & { hermesAuthTokenHash?: string }).hermesAuthTokenHash !== grant.token_hash) {
+  const status = deviceGrantStatus(hub, store, ctx.userId, deviceId);
+  if (status === 'foreign' || status === 'revoked') {
     return { ok: false, status: 403, message: 'HERMES_DEVICE_GRANT_REVOKED' };
   }
-  if (grant.paused) return { ok: false, status: 423, message: `Device ${dev.info.name} is paused by its owner.` };
+  if (status === 'offline') return { ok: false, status: 404, message: `Device ${deviceId} is not online or not yours.` };
+  if (status === 'paused') return { ok: false, status: 423, message: `Device ${dev.info.name} is paused by its owner.` };
 
   const started = Date.now();
   try {
