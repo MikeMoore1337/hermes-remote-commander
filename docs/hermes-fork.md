@@ -202,6 +202,18 @@ previous Hermes build: compatibility with this fork is **not verified**. Do not
 run its cutover mode for a fork image until that contract has been reviewed and
 tested for the exact candidate.
 
+The Docker CI also runs `scripts/h454_fork_legacy_state_smoke.sh` against a
+**disposable** fork relay. It overrides the image user to a synthetic legacy
+`979:975`, binds a private tmpfs to `/state`, sets
+`BRC_DB=/state/relay.sqlite`, disables networking, and verifies that SQLite
+is created by that UID while the relay reports healthy with zero devices.
+This is an execution check for the fork's CLI and storage path override,
+not evidence that the fork image satisfies the existing Hermes OCI admission
+labels/entrypoint or can migrate the owner's real SQLite/database secrets.
+The production transactional upgrade operator must **not** be called with this
+image until a separately reviewed fork-aware admission and owner cutover plan
+are tested on exact source/image IDs.
+
 Before any separately approved cutover:
 
 1. Identify the actual running relay, agents, device grants, paths and endpoint;
