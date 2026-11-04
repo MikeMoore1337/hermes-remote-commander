@@ -78,3 +78,72 @@ pnpm test:hermes
 Docker base images, JavaScript dependency resolutions and the agent's Debian
 snapshot are pinned. Bit-for-bit image reproducibility has not been verified.
 No production deployment is approved by these commands or by CI.
+
+## Migration and rollback
+
+The existing [Hermes transactional relay guide](https://github.com/MikeMoore1337/hermes/blob/f2b6bafad4dcb620596291519456f6b8654f6a11/docs/operations/h15-brc-transactional-cutover.md)
+describes a protected SQLite backup, disposable restore rehearsal and retained
+old container. Its artifact admission and runtime contract were designed for the
+previous Hermes build: compatibility with this fork is **not verified**. Do not
+run its cutover mode for a fork image until that contract has been reviewed and
+tested for the exact candidate.
+
+Before any separately approved cutover:
+
+1. Identify the actual running relay, agents, device grants, paths and endpoint;
+   pin the old and candidate source revisions, OCI image identities and runtime
+   configuration. Review the unresolved security, license and OS isolation risks.
+2. Check endpoint and OAuth issuer/callback compatibility and prepare an approved
+   owner-only backup of configuration and SQLite. A backup contains credentials;
+   never put it in Git, CI artifacts or logs. Rehearse restoration separately.
+3. Test the candidate with disposable identities and workspaces. Do not attach
+   a second agent with the identity of a running agent. Verify project-to-device
+   routing and the sandbox's actual Git origin and branch before any writes.
+4. Obtain explicit approval for the exact devices, paths, endpoint and maintenance
+   action. Quiesce requests, keep the old image/configuration and checkpoint,
+   switch one verified identity at a time, and check both real clients and each
+   approved device before considering the new route accepted.
+5. On failure, stop the candidate and recover the old service using its verified
+   image/configuration. Check whether the current database is backward compatible.
+   Never automatically overwrite newer state with an old snapshot: it can undo
+   token revocations and device rekeys. If data restoration is necessary, stop and
+   follow a separately authorized recovery procedure. Confirm service health and
+   live clients after rollback before removing any checkpoint.
+
+On 2026-11-03, a disposable, non-root, network-isolated Linux container ran
+[`hermes-rollback-rehearsal.mjs`](../scripts/hermes-rollback-rehearsal.mjs)
+with synthetic data. It used the SQLite module from local evaluation image
+`sha256:1c23e527da84ee1908d481ab9b62e681aa9986113c41a8a189384a8a44cdc2a3`
+(upstream label `cbe511702dd0147650353c29ac6ab1decd8afda1`), the fork module
+at `22bf5df2035094acb5aac06c2e33a4ff2c2ea2d9`, and the existing Hermes backup
+and restore helpers at `f2b6bafad4dcb620596291519456f6b8654f6a11`. Backup and
+disposable restoration passed; the synthetic store opened old → fork → old while
+preserving a later token revocation and device rekey. Restoring the earlier
+snapshot instead reintroduced the revoked synthetic token, demonstrating why it
+must not be restored blindly. This tested store modules and helpers, not a relay
+switch, the current production image, actual device credentials or live rollback.
+
+To repeat the disposable module rehearsal, mount only these files read-only in a
+Linux container that has Node 24 and Python 3, no network, a read-only root,
+an unprivileged UID and a writable private `/tmp`:
+
+| Container path | Source |
+| --- | --- |
+| `/fixtures/rehearse.mjs` | `scripts/hermes-rollback-rehearsal.mjs` in this fork |
+| `/fixtures/old-store.mjs` | `packages/relay/dist/store/sqlite.js` from the explicitly identified old image |
+| `/fixtures/new-store.mjs` | `packages/relay/dist/store/sqlite.js` built from the candidate fork |
+| `/fixtures/backup.py` | Hermes `deploy/h15/backup-relay.py` |
+| `/fixtures/restore.py` | Hermes `deploy/h15/rehearse-restore.py` |
+
+Run `node /fixtures/rehearse.mjs`. Never mount an actual relay database or secrets;
+the test creates and deletes its own synthetic SQLite data in `/tmp`.
+
+| Fork acceptance | ChatGPT | Codex |
+| --- | --- | --- |
+| Initialize, tools, OAuth and revoke | NOT_VERIFIED | NOT_VERIFIED |
+| Files, shell, process control and Git/Python | NOT_VERIFIED | NOT_VERIFIED |
+| Multiple real devices, reconnect and project routing | NOT_VERIFIED | NOT_VERIFIED |
+| Live cutover and rollback | NOT_VERIFIED | NOT_VERIFIED |
+
+The existing Hermes parity record describes a different deployed implementation;
+its results must not be reported as acceptance of this fork.
