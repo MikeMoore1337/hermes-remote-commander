@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
 
 const agent=path.resolve(process.argv[2] || '');
 const cli=path.join(agent,'dist/cli.js');
@@ -91,9 +92,43 @@ async function reconnect(manual){
  }finally{await stop(child);for(const ws of sockets)ws.terminate();wsServer.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 }
 
+async function inflightResultDoesNotCrossReconnect(){
+ const {WsClient}=await import(pathToFileURL(path.join(agent,'dist/transport/ws-client.js')).href);
+ const server=http.createServer(),wsServer=new WebSocketServer({noServer:true});
+ const sockets=new Set(),messages=[],calls=[];
+ let connections=0,current,releaseFirst;
+ const first=new Promise(resolve=>{releaseFirst=resolve;});
+ server.on('upgrade',(req,socket,head)=>wsServer.handleUpgrade(req,socket,head,ws=>{
+  connections++;current=ws;sockets.add(ws);ws.on('close',()=>sockets.delete(ws));
+  ws.on('message',raw=>{
+   const msg=JSON.parse(String(raw));messages.push({connection:connections,...msg});
+   if(msg.type==='hello'&&connections===1)ws.send(JSON.stringify({type:'call',id:'old-call',tool:'read_file',args:{}}));
+  });
+ }));
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const client=new WsClient({relayUrl:`http://127.0.0.1:${server.address().port}`,token:'synthetic',deviceId:'synthetic',
+  name:'synthetic',agentVersion:'test',coreVersion:'test',tools:[],
+  callTool:async(name,args)=>{calls.push(name);return calls.length===1?await first:{content:[{type:'text',text:'new'}]};}});
+ try{
+  client.start();
+  assert.ok(await until(()=>calls.length===1),'first synthetic call did not start');
+  current.terminate();
+  assert.ok(await until(()=>connections===2,15000),'agent did not reconnect');
+  releaseFirst({content:[{type:'text',text:'old'}]});
+  await delay(300);
+  assert.equal(messages.some(m=>m.connection===2&&m.type==='result'&&m.id==='old-call'),false,'old result crossed reconnect');
+  current.send(JSON.stringify({type:'call',id:'new-call',tool:'read_file',args:{}}));
+  assert.ok(await until(()=>messages.some(m=>m.connection===2&&m.type==='result'&&m.id==='new-call')),'new call failed');
+  assert.deepEqual(calls,['read_file','read_file'],'old call replayed after reconnect');
+ }finally{
+  client.stop();for(const ws of sockets)ws.terminate();wsServer.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+ }
+}
+
 try{
  await denied('timestamp');await denied('manual');await denied('timestamp',403);await deniedAfterHandshake();
  await reconnect(false);await reconnect(true);
+ await inflightResultDoesNotCrossReconnect();
  console.log('H454_401_RETAINED_NO_REPAIR=PASS');
  console.log('H454_SAVED_AND_MANUAL_RECONNECT=PASS');
  console.log('H454_REAL_CREDENTIALS_USED=FALSE');

@@ -100,6 +100,15 @@ export class DeviceHub {
       // No superseded/foreign socket can update activity or complete a
       // pending command, even when it knows a previously issued call ID.
       if (!dev || dev.socket !== socket) return;
+      try {
+        if (isCurrentGrant && !isCurrentGrant()) {
+          this.disconnect(deviceId, 'device credential revoked');
+          return;
+        }
+      } catch {
+        this.disconnect(deviceId, 'device authorization unavailable', 1011);
+        return;
+      }
       dev.lastSeen = Date.now();
 
       if (msg.type === 'pong') return;
@@ -151,6 +160,14 @@ export class DeviceHub {
   get(deviceId: string): ConnectedDevice | undefined {
     const dev = this.devices.get(deviceId);
     return dev && dev.socket.readyState === dev.socket.OPEN ? dev : undefined;
+  }
+
+  disconnect(deviceId: string, reason: string, code = 4401): void {
+    const dev = this.devices.get(deviceId);
+    if (!dev) return;
+    this.devices.delete(deviceId);
+    this.rejectPending(deviceId, dev.socket, 'DEVICE_DISCONNECTED');
+    dev.socket.close(code, reason);
   }
 
   /** Single online device for an owner, or null when 0 or >1 (caller must ask for deviceId). */

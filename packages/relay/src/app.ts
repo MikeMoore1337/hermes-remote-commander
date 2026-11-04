@@ -236,7 +236,7 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
     }
     const token = store.issueDeviceToken(deviceId, row.user_id, name || row.client_name, platform ?? null);
     // Retire the previous connection after rotating its credential.
-    hub.get(deviceId)?.socket.close(4401, 'device credential rotated');
+    hub.disconnect(deviceId, 'device credential rotated');
     store.deleteDeviceCode(row.device_code);
     log('info', `device paired: ${name || row.client_name} [${deviceId}] for user ${row.user_id}`);
     res.json({ device_token: token, device_id: deviceId, token_type: 'bearer', ws_url: cfg.publicUrl.replace(/^http/, 'ws') + '/ws' });
@@ -312,7 +312,7 @@ export function buildRelay(cfg: RelayConfig, log: (level: string, msg: string) =
       case 'rename': store.renameDevice(dev.device_id, String(name ?? '').trim().slice(0, 80) || dev.name); break;
       case 'pause': store.setDevicePaused(dev.device_id, true); break;
       case 'resume': store.setDevicePaused(dev.device_id, false); break;
-      case 'delete': store.deleteDevice(dev.device_id); hub.get(dev.device_id)?.socket.close(4401, 'device removed'); break;
+      case 'delete': store.deleteDevice(dev.device_id); hub.disconnect(dev.device_id, 'device removed'); break;
     }
     log('info', `admin: ${action} device ${dev.device_id}`);
     res.redirect('/admin');
