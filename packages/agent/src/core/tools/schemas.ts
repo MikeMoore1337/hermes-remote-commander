@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_JSON_ELEMENTS, withinJsonElementLimit } from 'brc-shared';
 
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({
@@ -60,7 +61,7 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
   // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
   // in server.ts.
@@ -68,7 +69,7 @@ export const ReadFileArgsSchema = z.object({
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
-  paths: z.array(z.string()),
+  paths: z.array(z.string()).max(MAX_JSON_ELEMENTS),
 });
 
 export const WriteFileArgsSchema = z.object({
@@ -91,20 +92,35 @@ export const PdfInsertOperationSchema = z.object({
 
 export const PdfDeleteOperationSchema = z.object({
   type: z.literal('delete'),
-  pageIndexes: z.array(z.number()),
+  pageIndexes: z.array(z.number()).max(MAX_JSON_ELEMENTS),
 });
 
 export const PdfOperationSchema = z.union([PdfInsertOperationSchema, PdfDeleteOperationSchema]);
 
-export const WritePdfArgsSchema = z.object({
+const PdfContentSchema = z.union([z.string(), z.array(PdfOperationSchema).max(MAX_JSON_ELEMENTS)]);
+export const WritePdfToolArgsSchema = z.object({
   path: z.string(),
+  content: PdfContentSchema,
+  outputPath: z.string().optional(),
+  options: z.object({}).passthrough().optional(),
+});
+export const WritePdfArgsSchema = WritePdfToolArgsSchema.extend({
   // Preprocess content to handle JSON strings that should be parsed as arrays
   content: z.preprocess(
-    (val) => {
+    (val, ctx) => {
       // If it's a string that looks like JSON array, parse it
       if (typeof val === 'string' && val.trim().startsWith('[')) {
+        if (Buffer.byteLength(val, 'utf8') > 1_048_576) {
+          ctx.addIssue({ code: 'custom', message: 'PDF structured input exceeds the byte limit' });
+          return z.NEVER;
+        }
         try {
-          return JSON.parse(val);
+          const parsed: unknown = JSON.parse(val);
+          if (!withinJsonElementLimit(parsed)) {
+            ctx.addIssue({ code: 'custom', message: 'PDF structured input exceeds the element limit' });
+            return z.NEVER;
+          }
+          return parsed;
         } catch {
           // If parsing fails, return as-is (might be markdown content)
           return val;
@@ -113,10 +129,8 @@ export const WritePdfArgsSchema = z.object({
       // Otherwise return as-is
       return val;
     },
-    z.union([z.string(), z.array(PdfOperationSchema)])
+    PdfContentSchema
   ),
-  outputPath: z.string().optional(),
-  options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
 export const CreateDirectoryArgsSchema = z.object({
@@ -171,7 +185,7 @@ export const EditBlockArgsSchema = z.object({
   // Structured file range rewrite (Excel, etc.)
   range: z.string().optional(),
   content: z.any().optional(),
-  options: z.record(z.any()).optional(),
+  options: z.record(z.string(), z.any()).optional(),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
@@ -255,7 +269,7 @@ export const GetRecentToolCallsArgsSchema = z.object({
 export const TrackUiEventArgsSchema = z.object({
   event: z.string().min(1).max(80),
   component: z.string().optional().default('file_preview'),
-  params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+  params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
 
 /**
@@ -263,7 +277,7 @@ export const TrackUiEventArgsSchema = z.object({
  * about parameters a caller sent that the tool does not support. Keep in sync
  * with the tool definitions in server.ts.
  */
-export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+export const toolArgSchemas: Record<string, z.ZodType> = {
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
   read_file: ReadFileArgsSchema,

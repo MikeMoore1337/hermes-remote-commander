@@ -58,11 +58,20 @@ permissions. Changes take effect only after a controlled restart.
 
 The authenticated `/mcp` route rejects JSON requests with more than 10,000
 array elements and object properties before SDK validation; the existing 32 MiB
-body limit remains. The 2026-11-03 `pnpm audit --prod` still reports one high
-[Zod advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5), plus 12 moderate
-and two low findings. The MCP limit does not establish complete mitigation for
-every Zod use or ingress. A compatible fix and independent security review are
-required before any runtime cutover.
+body limit remains. Dynamic client registration has a 64 KiB and 10,000-element
+limit. Structured PDF JSON strings are separately bounded before parsing.
+Zod is pinned to 4.6.6 for the
+[array advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5); the
+2026-11-03 production dependency audit reports 12 moderate and two low findings,
+with no high or critical advisories. The SDK still imports the bundled `zod/v3`
+compatibility code; a local OAuth/MCP exercise passed with v3 parsing trapped,
+but that does not prove every SDK path avoids it. Independent security review
+and OS isolation remain required before runtime cutover.
+
+PDF rendering uses an already installed system Chrome, Chromium or Windows Edge.
+It fails with `HERMES_BROWSER_UNAVAILABLE` when none is available; it neither
+downloads a browser nor prunes browser caches. Browser ownership, executable
+permissions and network isolation remain deployment responsibilities.
 
 The scoped `exceljs > unzipper` override uses MIT-licensed `unzipper@0.12.3`
 and removes `binary > buffers@0.1.1` from the lockfile. The MCP XLSX
