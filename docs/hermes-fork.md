@@ -107,8 +107,10 @@ current CI tarballs and local deploy-directory checks do not establish that.
 
 `pnpm audit --json` on the pinned workspace reported 12 moderate and 2 low
 advisories before the compatible lockfile updates below. Afterwards it reported
-3 moderate and no low, high or critical advisories. This is a lockfile result,
-not a determination that every affected function is reachable.
+3 moderate and no low, high or critical advisories. After the additional
+`uuid` and `glob` changes below, a fresh audit reported 1 moderate advisory.
+This is a workspace lockfile result, not a determination that every affected
+function is reachable or that independently installed npm packages are safe.
 
 | Updated dependency | Advisory IDs no longer reported |
 | --- | --- |
@@ -116,19 +118,21 @@ not a determination that every affected function is reachable.
 | `ip-address` 10.7.0 → 10.7.5 | [j6r3-76f7-8jcv](https://github.com/advisories/GHSA-j6r3-76f7-8jcv), [h3mg-xc3c-68pw](https://github.com/advisories/GHSA-h3mg-xc3c-68pw), [rxp7-6hxx-x8q5](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5) |
 | `hono` 4.13.7 → 4.13.16 and `@hono/node-server` 2.1.1 → 2.1.6 | [5r4p-p66f-jhc7](https://github.com/advisories/GHSA-5r4p-p66f-jhc7), [rmxm-3fg6-px4f](https://github.com/advisories/GHSA-rmxm-3fg6-px4f) |
 | `qs` 6.16.0 → 6.17.1 | [6pq8-jhm2-2vcw](https://github.com/advisories/GHSA-6pq8-jhm2-2vcw) |
+| ExcelJS `uuid` 8.3.2 → 11.1.1 | [w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) |
+| `glob` 10.5.0 and 13.0.6 → 14.0.2 | [3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) |
 
-Remaining moderate advisories:
+The updated `glob` resolves `minimatch` 11.0.4; its expansion bound, traversal
+cancellation and ExcelJS `uuid` buffer checks have regression tests. ExcelJS
+itself calls `uuid.v4()` without an output buffer; this observation is not a
+complete reachability proof.
 
-- [`uuid` 8.3.2 through ExcelJS](https://github.com/advisories/GHSA-w5hq-g745-h8pq):
-  the inspected ExcelJS source calls `v4()` without a supplied buffer; the
-  advisory concerns `v3`, `v5` and `v6` buffer bounds. This is not a complete
-  reachability proof, and the available fix crosses the dependency's major version.
-- [`minimatch`](https://github.com/advisories/GHSA-g3hv-75wg-m249): several
-  versions are present; the advisory describes CPU/memory amplification for
-  crafted patterns with optimization level at least 2. Reachability is not verified.
-- [`glob`](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4): versions 10.5.0
-  and 13.0.6 are reported; cancellation can leave traversal running. The first
-  reported fix is in major version 14; compatibility and reachability are not verified.
+The remaining moderate [minimatch advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+reports versions 3.1.5 and 5.1.9 through ExcelJS and `md-to-pdf`. Their inspected
+sources do not contain the specific optimizer named in the advisory, but the
+published affected range still includes them and [upstream clarification is open](https://github.com/github/advisory-database/issues/10811).
+Version 11 is outside the consumers' declared major versions; no incompatible
+override or audit suppression is used. Other denial-of-service mechanisms and
+actual reachability remain unverified.
 
 The installed Windows production dependency inventory reported no unknown
 license labels, but this does not inventory every Linux optional package or OS
