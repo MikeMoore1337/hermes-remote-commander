@@ -1,10 +1,50 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
+import { constants } from 'node:fs';
+import { open, opendir } from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'util';
 import os from 'os';
 import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+const MAX_PROC_ENTRIES = 1024;
+
+/** Minimal Linux fallback: never read argv, environment or process files. */
+export async function listLinuxProcfs(
+  root = '/proc', limit = MAX_PROC_ENTRIES,
+): Promise<{ processes: ProcessInfo[]; truncated: boolean }> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PROC_ENTRIES) {
+    throw new Error('invalid_procfs_limit');
+  }
+  const directory = await opendir(root);
+  const processes: ProcessInfo[] = [];
+  let truncated = false;
+  let scanned = 0;
+  for await (const entry of directory) {
+    if (!entry.isDirectory() || !/^[1-9][0-9]{0,9}$/.test(entry.name)) continue;
+    const pid = Number(entry.name);
+    if (!Number.isSafeInteger(pid) || pid > 2_147_483_647) continue;
+    if (scanned >= limit) { truncated = true; break; }
+    scanned += 1;
+    let file;
+    try {
+      file = await open(path.join(root, entry.name, 'comm'), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      const buffer = Buffer.alloc(64);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, null);
+      const command = buffer.subarray(0, bytesRead).toString('utf8')
+        .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ').trim() || '[unknown]';
+      processes.push({ pid, command, cpu: 'n/a', memory: 'n/a' });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (!['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes(code ?? '')) throw error;
+    } finally {
+      if (file) await file.close();
+    }
+  }
+  if (!processes.length) throw new Error('procfs_unavailable');
+  return { processes, truncated };
+}
 
 /**
  * Parse `tasklist /FO CSV /NH` output (#662). Fields per row, all quoted:
@@ -51,17 +91,27 @@ export function parsePsAux(stdout: string): ProcessInfo[] {
 
 export async function listProcesses(): Promise<ServerResult> {
   const isWindows = os.platform() === 'win32';
-  const command = isWindows ? 'tasklist /FO CSV /NH' : 'ps aux';
   try {
-    const { stdout } = await execAsync(command);
-    const processes = isWindows ? parseWindowsTasklistCsv(stdout) : parsePsAux(stdout);
+    let processes: ProcessInfo[];
+    let note = '';
+    try {
+      const { stdout } = isWindows
+        ? await execFileAsync('tasklist', ['/FO', 'CSV', '/NH'], { timeout: 5000, maxBuffer: 1024 * 1024 })
+        : await execFileAsync('ps', ['aux'], { timeout: 5000, maxBuffer: 1024 * 1024 });
+      processes = isWindows ? parseWindowsTasklistCsv(stdout) : parsePsAux(stdout);
+    } catch (error) {
+      if (os.platform() !== 'linux' || (error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+      const fallback = await listLinuxProcfs();
+      processes = fallback.processes;
+      note = `\n[Linux procfs fallback: names only; CPU and memory unavailable${fallback.truncated ? '; list truncated' : ''}]`;
+    }
 
     return {
       content: [{
         type: "text",
         text: processes.map(p =>
           `PID: ${p.pid}, Command: ${p.command}, CPU: ${p.cpu}, Memory: ${p.memory}`
-        ).join('\n')
+        ).join('\n') + note
       }],
     };
   } catch (error) {
